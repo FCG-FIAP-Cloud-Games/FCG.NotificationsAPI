@@ -33,7 +33,7 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
 
         builder.Property(notification => notification.CreatedAt).IsRequired();
 
-        // Unicidade lógica (Card 28, item 4): uma notificação por EventId + Type.
+        // Unicidade de EventId + Type.
         builder.HasIndex(notification => new { notification.EventId, notification.Type })
             .IsUnique();
     }
