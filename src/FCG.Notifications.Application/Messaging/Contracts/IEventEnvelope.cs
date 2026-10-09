@@ -1,6 +1,6 @@
 namespace FCG.Notifications.Application.Messaging.Contracts;
 
-public interface IEventEnvolope
+public interface IEventEnvelope
 {
     Guid EventId { get; }
     Guid CorrelationId { get; }

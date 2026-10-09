@@ -9,4 +9,4 @@ public sealed record UserCreatedEvent
     Guid UserId,
     string Name, 
     string Email   
-) : IEventEnvolope;
+) : IEventEnvelope;
