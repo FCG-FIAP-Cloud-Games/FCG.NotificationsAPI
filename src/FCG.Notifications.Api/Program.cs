@@ -1,3 +1,4 @@
+using FCG.Notifications.Application.Notifications;
 using FCG.Notifications.Infrastructure.IoC;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
@@ -5,6 +6,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
+
+// Registra os serviços da camada de aplicação
+builder.Services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
+
+// Registra os serviços de infraestrutura e mensageria (já incluindo o INotificationSender)
 builder.Services.AddNotificationsInfrastructure(builder.Configuration);
 
 var app = builder.Build();
