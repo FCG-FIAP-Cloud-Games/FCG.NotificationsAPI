@@ -1,4 +1,6 @@
 using FCG.Notifications.Application.Abstractions;
+using FCG.Notifications.Application.Messaging.Contracts;
+using FCG.Notifications.Application.Notifications;
 using FCG.Notifications.Infrastructure.Delivery;
 using FCG.Notifications.Infrastructure.Messaging;
 using FCG.Notifications.Infrastructure.Messaging.Consumers;
@@ -14,14 +16,13 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Registra a implementação concreta do INotificationSender na infraestrutura
-        services.AddScoped<INotificationSender, ConsoleNotificationSender>();
-
         var rabbitMqOptions = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
             ?? new RabbitMqOptions();
 
-        // Não bloquear o startup do host esperando o broker responder: a credencial é própria deste serviço,
-        // e o /health deste card não depende da conexão com o broker.
+        services.AddScoped<INotificationSender, ConsoleNotificationSender>();
+        services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
+        services.AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>();
+
         services.Configure<MassTransitHostOptions>(options =>
         {
             options.WaitUntilStarted = false;
@@ -30,6 +31,7 @@ public static class DependencyInjection
         services.AddMassTransit(busConfigurator =>
         {
             busConfigurator.AddConsumer<UserCreatedEventConsumer>();
+            busConfigurator.AddConsumer<PaymentProcessedEventConsumer>();
 
             busConfigurator.UsingRabbitMq((context, rabbitMqConfigurator) =>
             {
@@ -39,20 +41,26 @@ public static class DependencyInjection
                     host.Password(rabbitMqOptions.Password);
                 });
 
-                // Retry para falhas transitórias: 
-                // até 3 tentativas, intervalo fixo de 5s. PermanentMessageException nunca
-                // é retida — vai direto para a fila de erro (notifications-user-created_error).
+                // Nome do exchange fixado pela convenção do Card 06 (#49, seção 3) — não o
+                // namespace completo do tipo .NET. Garante que o exchange seja o mesmo
+                // independente de como cada serviço nomeia seu próprio contrato.
+                rabbitMqConfigurator.Message<UserCreatedEvent>(m => m.SetEntityName("UserCreatedEvent"));
+                rabbitMqConfigurator.Message<PaymentProcessedEvent>(m => m.SetEntityName("PaymentProcessedEvent"));
+
                 rabbitMqConfigurator.UseMessageRetry(retryConfigurator =>
                 {
                     retryConfigurator.Interval(3, TimeSpan.FromSeconds(5));
                     retryConfigurator.Ignore<PermanentMessageException>();
                 });
 
-                // Nome de fila explícito, seguindo a convenção <service>-<evento>
-                // definida — não o nome automático do MassTransit.
                 rabbitMqConfigurator.ReceiveEndpoint("notifications-user-created", endpointConfigurator =>
                 {
                     endpointConfigurator.ConfigureConsumer<UserCreatedEventConsumer>(context);
+                });
+
+                rabbitMqConfigurator.ReceiveEndpoint("notifications-payment-processed", endpointConfigurator =>
+                {
+                    endpointConfigurator.ConfigureConsumer<PaymentProcessedEventConsumer>(context);
                 });
             });
         });
