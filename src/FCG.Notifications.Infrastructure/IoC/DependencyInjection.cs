@@ -1,10 +1,12 @@
 using FCG.Notifications.Application.Abstractions;
 using FCG.Notifications.Application.Messaging.Contracts;
 using FCG.Notifications.Application.Notifications;
+using FCG.Notifications.Infrastructure.Data;
 using FCG.Notifications.Infrastructure.Delivery;
 using FCG.Notifications.Infrastructure.Messaging;
 using FCG.Notifications.Infrastructure.Messaging.Consumers;
 using MassTransit;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -12,12 +14,27 @@ namespace FCG.Notifications.Infrastructure.IoC;
 
 public static class DependencyInjection
 {
+    private const string DatabaseConnectionName = "NotificationsDatabase";
+
     public static IServiceCollection AddNotificationsInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         var rabbitMqOptions = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
             ?? new RabbitMqOptions();
+
+        // Connection string própria do serviço (Card 28, item 11). A leitura fica dentro
+        // da lambda: o erro só aparece quando o contexto é usado, então o host (e o /health)
+        // sobem mesmo sem banco configurado.
+        services.AddDbContext<NotificationsDbContext>(options =>
+            options.UseNpgsql(
+                configuration.GetConnectionString(DatabaseConnectionName)
+                    ?? throw new InvalidOperationException(
+                        $"Connection string '{DatabaseConnectionName}' não configurada.")));
+
+        services.AddScoped<IInboxStore, InboxStore>();
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         services.AddScoped<INotificationSender, ConsoleNotificationSender>();
         services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
@@ -42,8 +59,7 @@ public static class DependencyInjection
                 });
 
                 // Nome do exchange fixado pela convenção do Card 06 (#49, seção 3) — não o
-                // namespace completo do tipo .NET. Garante que o exchange seja o mesmo
-                // independente de como cada serviço nomeia seu próprio contrato.
+                // namespace completo do tipo .NET.
                 rabbitMqConfigurator.Message<UserCreatedEvent>(m => m.SetEntityName("UserCreatedEvent"));
                 rabbitMqConfigurator.Message<PaymentProcessedEvent>(m => m.SetEntityName("PaymentProcessedEvent"));
 

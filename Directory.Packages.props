@@ -4,8 +4,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Mensageria (Card 06 - #49): decisão assumida como aprovada.
+         Se o grupo desaprovar, remover estas duas linhas, o PackageReference
+         correspondente nos .csproj e o conteúdo de Infrastructure/Messaging. -->
     <PackageVersion Include="MassTransit" Version="8.3.0" />
     <PackageVersion Include="MassTransit.RabbitMQ" Version="8.3.0" />
+
+    <!-- Persistência (Card 28 - #71): PostgreSQL assumido, a confirmar com o grupo. -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
 
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.29" />
