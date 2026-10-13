@@ -23,6 +23,11 @@ public static class DependencyInjection
         var rabbitMqOptions = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>()
             ?? new RabbitMqOptions();
 
+        // Falha na subida com mensagem clara se o Host/VirtualHost vier vazio ou inválido
+        // (ex.: variável RabbitMq__Host não definida no container), em vez do
+        // UriFormatException que o MassTransit lança mais adiante.
+        rabbitMqOptions.Validate();
+
         // Connection string própria do serviço (Card 28, item 11). A leitura fica dentro
         // da lambda: o erro só aparece quando o contexto é usado, então o host (e o /health)
         // sobem mesmo sem banco configurado.

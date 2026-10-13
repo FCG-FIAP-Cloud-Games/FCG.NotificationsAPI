@@ -1,0 +1,52 @@
+services:
+  notifications-api:
+    build: .
+    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0}
+    ports:
+      - "5210:8080"
+    environment:
+      RabbitMq__Host: rabbitmq
+      RabbitMq__VirtualHost: /
+      RabbitMq__Username: ${RABBITMQ_USER:?defina RABBITMQ_USER no .env}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+      ConnectionStrings__NotificationsDatabase: >-
+        Host=postgres;Port=5432;Database=notifications;
+        Username=${POSTGRES_USER:?defina POSTGRES_USER no .env};
+        Password=${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?defina RABBITMQ_USER no .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: notifications
+    volumes:
+      - notifications-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  notifications-pgdata:
