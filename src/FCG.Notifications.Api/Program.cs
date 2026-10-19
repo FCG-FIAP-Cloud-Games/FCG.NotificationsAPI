@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
+builder.Services.AddControllers();
 
 // Swagger: ligado em Development ou quando Swagger:Enabled=true (variável Swagger__Enabled).
 var swaggerEnabled = builder.Configuration.GetValue<bool?>("Swagger:Enabled")
@@ -27,6 +28,7 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.MapControllers();
 
 if (swaggerEnabled)
 {

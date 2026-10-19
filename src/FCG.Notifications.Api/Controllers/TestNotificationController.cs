@@ -16,25 +16,22 @@ namespace FCG.Notifications.Api.Controllers
         }
 
         [HttpPost("user-created")]
-        public async Task<IActionResult> TestUserCreated()
+        public async Task<IActionResult> TestUserCreated([FromBody] TestUserCreatedRequest request)
         {
-            await _publishEndpoint.Publish<UserCreatedEvent>(new {
-                Email = "leoloss@uorak.com",
-                Name = "Utilizador de Teste"
-            });
+            var now = DateTimeOffset.UtcNow;
+            await _publishEndpoint.Publish(new UserCreatedEvent(
+                EventId: Guid.NewGuid(),
+                CorrelationId: Guid.NewGuid(),
+                OccurredAt: now,
+                Version: 1,
+                UserId: Guid.NewGuid(),
+                Name: request.Name,
+                Email: request.Email));
 
             return Ok(new { message = "Evento UserCreatedEvent publicado com sucesso!" });
         }
 
-        [HttpPost("payment-processed")]
-        public async Task<IActionResult> TestPaymentProcessed()
-        {
-            await _publishEndpoint.Publish<PaymentProcessedEvent>(new {
-                Email = "leoloss@uorak.com",
-                Name = "Utilizador de Teste"
-            });
-
-            return Ok(new { message = "Evento PaymentProcessedEvent publicado com sucesso!" });
-        }
     }
+
+    public sealed record TestUserCreatedRequest(string Name, string Email);
 }

@@ -9,6 +9,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace FCG.Notifications.Infrastructure.IoC;
 
@@ -41,9 +42,20 @@ public static class DependencyInjection
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-        services.AddScoped<INotificationSender, ConsoleNotificationSender>();
+        services.AddScoped<INotificationSender, SmtpNotificationSender>();
         services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
-        services.AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>();
+        services.AddScoped<IPurchaseConfirmationService>(serviceProvider =>
+        {
+            var environment = serviceProvider.GetRequiredService<IHostEnvironment>();
+            var testRecipient = environment.IsDevelopment()
+                ? serviceProvider.GetRequiredService<IConfiguration>()[
+                    "Notifications:DevelopmentTestRecipient"]
+                : null;
+
+            return new PurchaseConfirmationService(
+                serviceProvider.GetRequiredService<INotificationSender>(),
+                testRecipient);
+        });
 
         services.Configure<MassTransitHostOptions>(options =>
         {
@@ -76,11 +88,18 @@ public static class DependencyInjection
 
                 rabbitMqConfigurator.ReceiveEndpoint("notifications-user-created", endpointConfigurator =>
                 {
+                    // Permite publicar JSON simples pelo RabbitMQ Management para testes
+                    // e integrações externas. O consumer deste endpoint recebe apenas
+                    // UserCreatedEvent, então o raw deserializer pode inferir o tipo.
+                    endpointConfigurator.UseRawJsonDeserializer(RawSerializerOptions.All, isDefault: true);
                     endpointConfigurator.ConfigureConsumer<UserCreatedEventConsumer>(context);
                 });
 
                 rabbitMqConfigurator.ReceiveEndpoint("notifications-payment-processed", endpointConfigurator =>
                 {
+                    // Permite publicar JSON simples pelo RabbitMQ Management durante
+                    // testes locais; o contrato permanece igual ao PaymentsAPI.
+                    endpointConfigurator.UseRawJsonDeserializer(RawSerializerOptions.All, isDefault: true);
                     endpointConfigurator.ConfigureConsumer<PaymentProcessedEventConsumer>(context);
                 });
             });

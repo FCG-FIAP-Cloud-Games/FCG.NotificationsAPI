@@ -17,12 +17,22 @@ public interface IPurchaseConfirmationService
 /// persistência e fica para o Card 28 — aqui o "destinatário" é só o
 /// UserId como identificador, sem e-mail real.
 /// </summary>
-public sealed class PurchaseConfirmationService(INotificationSender sender) : IPurchaseConfirmationService
+public sealed class PurchaseConfirmationService(
+    INotificationSender sender,
+    string? developmentTestRecipient) : IPurchaseConfirmationService
 {
     public Task NotifyAsync(PaymentProcessedEvent paymentProcessedEvent, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(developmentTestRecipient))
+        {
+            throw new InvalidOperationException(
+                "PaymentProcessedEvent não contém e-mail do usuário. Configure " +
+                "Notifications:DevelopmentTestRecipient em Development para testar, " +
+                "ou implemente uma associação persistente UserId/e-mail para uso real.");
+        }
+
         var message = new NotificationMessage(
-            Recipient: paymentProcessedEvent.UserId.ToString(),
+            Recipient: developmentTestRecipient,
             Subject: "Compra confirmada",
             Body: $"Compra confirmada para o pedido {paymentProcessedEvent.OrderId}. " +
                   $"Jogo: {paymentProcessedEvent.GameId}, Valor: {paymentProcessedEvent.Amount} {paymentProcessedEvent.Currency}.");

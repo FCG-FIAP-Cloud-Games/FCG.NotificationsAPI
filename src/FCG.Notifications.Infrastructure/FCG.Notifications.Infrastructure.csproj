@@ -3,6 +3,7 @@
   <ItemGroup>
     <!-- Decisão do Card 06 (#49) assumida como aprovada.
          Se desaprovada: remover estas duas linhas e o conteúdo de Messaging/. -->
+    <PackageReference Include="MailKit" />
     <PackageReference Include="MassTransit" />
     <PackageReference Include="MassTransit.RabbitMQ" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />

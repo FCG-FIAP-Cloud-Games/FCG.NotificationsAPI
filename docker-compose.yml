@@ -11,6 +11,14 @@ x-notifications-config: &notifications-config
   RabbitMq__Password: ${RABBITMQ_PASSWORD:-Rabbit_Notif_Demo_2026!}
   RabbitMq__UseTls: "false"
   ConnectionStrings__NotificationsDatabase: "Host=postgres;Port=5432;Database=fcg_notifications;Username=${POSTGRES_USER:-fcg_notifications_demo};Password=${POSTGRES_PASSWORD:-NotifDb_Demo_2026!}"
+  # Fallback local para MailHog; sobrescreva no .env para entrega por provedor real.
+  Smtp__Host: ${SMTP_HOST:-smtp-dev}
+  Smtp__Port: ${SMTP_PORT:-1025}
+  Smtp__User: ${SMTP_USER:-}
+  Smtp__Password: ${SMTP_PASSWORD:-}
+  Smtp__From: ${SMTP_FROM:-no-reply@fcgnotifications.local}
+  Smtp__SecureSocketOptions: ${SMTP_SECURE_SOCKET_OPTIONS:-None}
+  Notifications__DevelopmentTestRecipient: ${NOTIFICATIONS_TEST_RECIPIENT:-}
 
 services:
   postgres:
@@ -38,6 +46,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-fcg_notifications_demo}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-Rabbit_Notif_Demo_2026!}
     ports:
+      - "127.0.0.1:5672:5672"
       - "127.0.0.1:${FCG_RABBIT_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq-dados:/var/lib/rabbitmq
@@ -47,6 +56,16 @@ services:
       timeout: 5s
       retries: 30
       start_period: 15s
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  smtp-dev:
+    image: mailhog/mailhog
+    container_name: fcg_mailhog
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
     restart: unless-stopped
     networks:
       - fcg-interna
