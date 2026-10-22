@@ -1,0 +1,9 @@
+{
+  "eventId": "e6d32c72-e339-4a2e-bdb9-48a7de0aef51",
+  "correlationId": "a98034b4-840a-44af-a0e0-29400dcc379a",
+  "occurredAt": "2026-10-22T12:00:00Z",
+  "version": 1,
+  "userId": "ae4b3272-d514-43cb-8763-91f1a5d8bc07",
+  "name": "Teste direto RabbitMQ",
+  "email": "destinatario-de-teste@example.net"
+}

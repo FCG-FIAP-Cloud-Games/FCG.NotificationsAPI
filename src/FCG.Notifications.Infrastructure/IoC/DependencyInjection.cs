@@ -41,21 +41,14 @@ public static class DependencyInjection
         services.AddScoped<IInboxStore, InboxStore>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IUserEmailRepository, UserEmailRepository>();
 
         services.AddScoped<INotificationSender, SmtpNotificationSender>();
         services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
-        services.AddScoped<IPurchaseConfirmationService>(serviceProvider =>
-        {
-            var environment = serviceProvider.GetRequiredService<IHostEnvironment>();
-            var testRecipient = environment.IsDevelopment()
-                ? serviceProvider.GetRequiredService<IConfiguration>()[
-                    "Notifications:DevelopmentTestRecipient"]
-                : null;
+        services.AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>();
 
-            return new PurchaseConfirmationService(
-                serviceProvider.GetRequiredService<INotificationSender>(),
-                testRecipient);
-        });
+        var enablePurchaseNotificationTestEndpoint = configuration.GetValue<bool>(
+            "Messaging:EnablePurchaseNotificationTestEndpoint");
 
         services.Configure<MassTransitHostOptions>(options =>
         {
@@ -65,7 +58,10 @@ public static class DependencyInjection
         services.AddMassTransit(busConfigurator =>
         {
             busConfigurator.AddConsumer<UserCreatedEventConsumer>();
+            busConfigurator.AddConsumer<UserEmailUpdatedEventConsumer>();
             busConfigurator.AddConsumer<PaymentProcessedEventConsumer>();
+            if (enablePurchaseNotificationTestEndpoint)
+                busConfigurator.AddConsumer<PurchaseNotificationTestEventConsumer>();
 
             busConfigurator.UsingRabbitMq((context, rabbitMqConfigurator) =>
             {
@@ -79,6 +75,12 @@ public static class DependencyInjection
                 // namespace completo do tipo .NET.
                 rabbitMqConfigurator.Message<UserCreatedEvent>(m => m.SetEntityName("UserCreatedEvent"));
                 rabbitMqConfigurator.Message<PaymentProcessedEvent>(m => m.SetEntityName("PaymentProcessedEvent"));
+                rabbitMqConfigurator.Message<UserEmailUpdatedEvent>(m => m.SetEntityName("UserEmailUpdatedEvent"));
+                if (enablePurchaseNotificationTestEndpoint)
+                {
+                    rabbitMqConfigurator.Message<PurchaseNotificationTestEvent>(
+                        m => m.SetEntityName("PurchaseNotificationTestEvent"));
+                }
 
                 rabbitMqConfigurator.UseMessageRetry(retryConfigurator =>
                 {
@@ -95,6 +97,12 @@ public static class DependencyInjection
                     endpointConfigurator.ConfigureConsumer<UserCreatedEventConsumer>(context);
                 });
 
+                rabbitMqConfigurator.ReceiveEndpoint("notifications-user-email-updated", endpointConfigurator =>
+                {
+                    endpointConfigurator.UseRawJsonDeserializer(RawSerializerOptions.All, isDefault: true);
+                    endpointConfigurator.ConfigureConsumer<UserEmailUpdatedEventConsumer>(context);
+                });
+
                 rabbitMqConfigurator.ReceiveEndpoint("notifications-payment-processed", endpointConfigurator =>
                 {
                     // Permite publicar JSON simples pelo RabbitMQ Management durante
@@ -102,6 +110,15 @@ public static class DependencyInjection
                     endpointConfigurator.UseRawJsonDeserializer(RawSerializerOptions.All, isDefault: true);
                     endpointConfigurator.ConfigureConsumer<PaymentProcessedEventConsumer>(context);
                 });
+
+                if (enablePurchaseNotificationTestEndpoint)
+                {
+                    rabbitMqConfigurator.ReceiveEndpoint("notifications-purchase-test", endpointConfigurator =>
+                    {
+                        endpointConfigurator.UseRawJsonDeserializer(RawSerializerOptions.All, isDefault: true);
+                        endpointConfigurator.ConfigureConsumer<PurchaseNotificationTestEventConsumer>(context);
+                    });
+                }
             });
         });
 

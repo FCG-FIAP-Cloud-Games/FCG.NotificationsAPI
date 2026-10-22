@@ -12,6 +12,9 @@ namespace FCG.Notifications.UnitTests;
 
 public class PaymentProcessedEventConsumerTests
 {
+    private static readonly Guid TestUserId = Guid.Parse("f04d5f39-1643-4d88-a9d2-0ca2d3495920");
+    private const string TestRecipient = "payments-test@fcg.example";
+
     private static PaymentProcessedEvent CreateEvent(
         PaymentStatus status = PaymentStatus.Approved,
         Guid? correlationId = null,
@@ -24,7 +27,7 @@ public class PaymentProcessedEventConsumerTests
             1,
             Guid.NewGuid(),
             orderId ?? Guid.NewGuid(),
-            Guid.NewGuid(),
+            TestUserId,
             gameId ?? Guid.NewGuid(),
             59.90m,
             "BRL",
@@ -38,6 +41,7 @@ public class PaymentProcessedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(_ => CreateUserEmailRepository())
             .AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>()
             .AddMassTransitTestHarness(x => x.AddConsumer<PaymentProcessedEventConsumer>())
             .BuildServiceProvider(true);
@@ -52,6 +56,7 @@ public class PaymentProcessedEventConsumerTests
 
         Assert.True(await harness.Consumed.Any<PaymentProcessedEvent>(harness.CancellationToken));
         Assert.NotNull(sender.LastMessage);
+        Assert.Equal(TestRecipient, sender.LastMessage.Recipient);
         Assert.Contains(orderId.ToString(), sender.LastMessage.Body);
     }
 
@@ -62,6 +67,7 @@ public class PaymentProcessedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(_ => CreateUserEmailRepository())
             .AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>()
             .AddMassTransitTestHarness(x => x.AddConsumer<PaymentProcessedEventConsumer>())
             .BuildServiceProvider(true);
@@ -84,6 +90,7 @@ public class PaymentProcessedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(_ => CreateUserEmailRepository())
             .AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>()
             .AddMassTransitTestHarness(x => x.AddConsumer<PaymentProcessedEventConsumer>())
             .BuildServiceProvider(true);
@@ -107,6 +114,7 @@ public class PaymentProcessedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(_ => CreateUserEmailRepository())
             .AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>()
             .AddMassTransitTestHarness(x => x.AddConsumer<PaymentProcessedEventConsumer>())
             .BuildServiceProvider(true);
@@ -132,6 +140,7 @@ public class PaymentProcessedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(_ => CreateUserEmailRepository())
             .AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>()
             .AddMassTransitTestHarness(x =>
             {
@@ -159,5 +168,14 @@ public class PaymentProcessedEventConsumerTests
         Assert.True(await harness.Consumed.Any<PaymentProcessedEvent>(harness.CancellationToken));
         Assert.Equal(2, sender.Attempts);
         Assert.NotNull(sender.LastMessage);
+    }
+
+    private static InMemoryUserEmailRepository CreateUserEmailRepository()
+    {
+        var repository = new InMemoryUserEmailRepository();
+        repository.UpsertAsync(TestUserId, TestRecipient, DateTimeOffset.UtcNow, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        return repository;
     }
 }

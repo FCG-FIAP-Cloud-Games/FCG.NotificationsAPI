@@ -16,9 +16,11 @@ public class UserCreatedEventConsumerTests
     public async Task Consome_evento_e_envia_notificacao()
     {
         var sender = new RecordingNotificationSender();
+        var emailRepository = new InMemoryUserEmailRepository();
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository>(emailRepository)
             .AddScoped<IWelcomeEmailService, WelcomeEmailService>()
             .AddMassTransitTestHarness(x =>
             {
@@ -44,6 +46,9 @@ public class UserCreatedEventConsumerTests
 
         Assert.True(await harness.Consumed.Any<UserCreatedEvent>(TestContext.Current.CancellationToken));
         Assert.Equal("leoloss@uorak.com", sender.LastMessage?.Recipient);
+        Assert.Equal(
+            "leoloss@uorak.com",
+            await emailRepository.GetEmailAsync(userCreatedEvent.UserId, CancellationToken.None));
     }
 
     [Fact]
@@ -53,6 +58,7 @@ public class UserCreatedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository, InMemoryUserEmailRepository>()
             .AddScoped<IWelcomeEmailService, WelcomeEmailService>()
             .AddMassTransitTestHarness(x =>
             {
@@ -88,6 +94,7 @@ public class UserCreatedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository, InMemoryUserEmailRepository>()
             .AddScoped<IWelcomeEmailService, WelcomeEmailService>()
             .AddMassTransitTestHarness(x =>
             {
@@ -125,6 +132,7 @@ public class UserCreatedEventConsumerTests
 
         await using var provider = new ServiceCollection()
             .AddSingleton<INotificationSender>(sender)
+            .AddSingleton<IUserEmailRepository, InMemoryUserEmailRepository>()
             .AddScoped<IWelcomeEmailService, WelcomeEmailService>()
             .AddMassTransitTestHarness(x =>
             {

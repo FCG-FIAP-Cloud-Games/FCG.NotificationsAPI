@@ -1,3 +1,4 @@
+using FCG.Notifications.Application.Abstractions;
 using FCG.Notifications.Application.Notifications;
 using FCG.Notifications.Application.Messaging.Contracts;
 using MassTransit;
@@ -9,6 +10,7 @@ namespace FCG.Notifications.Infrastructure.Messaging.Consumers;
 
 public sealed partial class UserCreatedEventConsumer(
     IWelcomeEmailService welcomeEmailService,
+    IUserEmailRepository userEmailRepository,
     ILogger<UserCreatedEventConsumer> logger) : IConsumer<UserCreatedEvent>
 
 {
@@ -23,7 +25,13 @@ public sealed partial class UserCreatedEventConsumer(
         }
 
         LogProcessingStarted(logger, userCreatedEvent.EventId, userCreatedEvent.CorrelationId);
-        
+
+        await userEmailRepository.UpsertAsync(
+            userCreatedEvent.UserId,
+            userCreatedEvent.Email,
+            userCreatedEvent.OccurredAt,
+            context.CancellationToken);
+
         await welcomeEmailService.NotifyAsync(userCreatedEvent, context.CancellationToken);
 
         LogProcessingCompleted(logger, userCreatedEvent.EventId, userCreatedEvent.CorrelationId);

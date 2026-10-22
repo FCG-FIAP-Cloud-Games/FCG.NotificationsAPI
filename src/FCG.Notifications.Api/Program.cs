@@ -1,5 +1,7 @@
 using FCG.Notifications.Application.Notifications;
 using FCG.Notifications.Infrastructure.IoC;
+using FCG.Notifications.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -25,6 +27,13 @@ builder.Services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
 builder.Services.AddNotificationsInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+
+if (builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var database = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+    await database.Database.MigrateAsync();
+}
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();

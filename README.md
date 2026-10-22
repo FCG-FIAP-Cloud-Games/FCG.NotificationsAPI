@@ -2,23 +2,54 @@
 
 Microsserviço da FCG responsável por consumir eventos de domínio e enviar notificações por SMTP.
 
-## Envio real de e-mail no Docker Compose
+## Modos de envio de email
 
-Para entrega externa, configure no `.env` os dados SMTP reais do provedor. `SMTP_FROM` precisa ser um remetente autorizado pelo provedor. Para SMTP na porta 587 use `SMTP_SECURE_SOCKET_OPTIONS=StartTls`; para porta 465 use `SslOnConnect`. Sem sobrescritas no `.env`, o Compose usa o MailHog local como padrão de desenvolvimento.
+Há dois modos explícitos no Compose. O padrão é **MailHog**, que captura as mensagens e não as entrega a caixas externas. O envio real só é ativado ao incluir o arquivo `docker-compose.smtp-real.yml`.
 
-Para validar localmente sem credenciais externas, a API pode usar o MailHog do Compose. Isso confirma que evento, consumer e envio SMTP funcionam, mas as mensagens só aparecem em `http://localhost:8025` e não chegam a caixas externas. Os valores abaixo sobrescrevem temporariamente os valores SMTP do `.env` para esse comando:
-
-```bash
-SMTP_HOST=smtp-dev SMTP_PORT=1025 SMTP_USER= SMTP_PASSWORD= SMTP_FROM=no-reply@fcgnotifications.local SMTP_SECURE_SOCKET_OPTIONS=None docker compose up -d --force-recreate notificationsapi
-```
-
-Para voltar ao envio externo depois do teste local, recrie `notificationsapi` sem esses overrides, usando as variáveis SMTP válidas do `.env`.
-
-Depois recrie o container para carregar as variáveis:
+### Testes locais com MailHog (padrão)
 
 ```bash
-docker compose up -d --build --force-recreate notificationsapi
+docker compose up -d --build --force-recreate
 ```
+
+A API usa `smtp-dev:1025`; veja as mensagens em [http://localhost:8025](http://localhost:8025). Este modo continua isolado mesmo que o `.env` contenha credenciais SMTP reais.
+
+### Teste de entrega em caixa real
+
+Configure no `.env` as variáveis `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` e `SMTP_SECURE_SOCKET_OPTIONS`. `SMTP_FROM` deve ser autorizado pelo provedor. Na porta 587 use `StartTls`; na porta 465 use `SslOnConnect`. O `.env.example` mostra os nomes e formatos esperados; não versione credenciais reais.
+
+Ative o modo real explicitamente:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.smtp-real.yml up -d --build --force-recreate notificationsapi
+```
+
+O Compose exige host, usuário, senha e remetente configurados antes de iniciar este modo. Depois, publique o evento de teste com o endereço que deve receber a mensagem. Confira os logs da API para verificar o aceite do SMTP e a caixa de entrada/spam para confirmar a entrega. O MailHog não recebe cópia nesse modo.
+
+Para voltar ao modo seguro local, recrie a API apenas com o arquivo padrão:
+
+```bash
+docker compose up -d --force-recreate notificationsapi
+```
+
+As credenciais ficam apenas no `.env` local, que não deve ser commitado ou compartilhado. Não cole senhas SMTP nos eventos RabbitMQ: o evento contém somente o email destinatário.
+
+### Payloads de teste no RabbitMQ Management
+
+Os JSONs prontos ficam em [`docs/test-payloads/`](docs/test-payloads/):
+
+| Arquivo | Exchange | Resultado esperado |
+|---|---|---|
+| `user-created.json` | `UserCreatedEvent` | Envia boas-vindas e grava `userId → email` |
+| `payment-processed.json` | `PaymentProcessedEvent` | Envia confirmação ao email projetado para o `userId` |
+| `purchase-notification-test.json` | `PurchaseNotificationTestEvent` | Envia confirmação ao email do próprio evento (Development) |
+| `user-email-updated.json` | `UserEmailUpdatedEvent` | Atualiza o email projetado, sem enviar mensagem |
+
+No painel em `http://localhost:15672`, abra a exchange indicada, deixe **Routing key** vazia, preencha **Properties** com `content_type` = `application/json` e cole o conteúdo do arquivo em **Payload**. Para testar o pagamento, publique primeiro `user-created.json`, aguarde seu processamento e então publique `payment-processed.json`; os dois arquivos usam o mesmo `userId`. O evento `PurchaseNotificationTestEvent` pode ser testado independentemente.
+
+Os endereços `example.net` nos exemplos são marcadores: substitua-os por uma caixa controlada por você antes do modo SMTP real. Ao repetir um evento, gere novos `eventId`, `correlationId` e IDs de pagamento/pedido; mantenha o mesmo `userId` entre cadastro e pagamento.
+
+No ambiente local do Compose, `notificationsapi` aplica as migrations do banco ao iniciar (`Database__ApplyMigrationsOnStartup=true`). A API de produção não aplica migrations automaticamente; execute-as no processo de implantação.
 
 Dispare um e-mail de boas-vindas para o endereço desejado:
 
@@ -29,6 +60,8 @@ curl -i -X POST http://localhost:5083/api/TestNotification/user-created \
 ```
 
 O endpoint publica um `UserCreatedEvent` válido no RabbitMQ. A resposta confirma a publicação; a entrega depende do consumidor e do SMTP configurado. Consulte os logs com `docker compose logs -f notificationsapi` se o consumidor ou o SMTP reportar falha. O serviço `smtp-dev` continua disponível para testes locais, mas não entrega mensagens a caixas de e-mail reais.
+
+Por padrão, o painel RabbitMQ fica acessível somente no próprio computador (`127.0.0.1`). Para permitir que colegas na mesma rede local publiquem eventos no ambiente que está rodando neste computador, configure `FCG_RABBIT_MANAGEMENT_BIND_ADDRESS=0.0.0.0` no `.env` e recrie o RabbitMQ. Eles poderão abrir `http://IP-DO-COMPUTADOR:15672` e entrar com as credenciais RabbitMQ do `.env`. Use isso somente em uma rede confiável; não exponha a porta de gerenciamento diretamente à internet. O SMTP permanece configurado apenas no serviço da API, portanto não é necessário compartilhar a senha de app do Gmail com quem apenas publica eventos.
 
 ### Publicar diretamente pelo RabbitMQ Management
 
@@ -42,26 +75,55 @@ O consumer `notifications-user-created` aceita JSON simples (`application/json`)
   "version": 1,
   "userId": "ae4b3272-d514-43cb-8763-91f1a5d8bc07",
   "name": "Teste direto RabbitMQ",
-  "email": "leoloss@uorak.com"
+  "email": "email-informado-para-o-teste@exemplo.com"
 }
 ```
 
-Confirme em **Queues and Streams** → `notifications-user-created` que existe um consumer. Depois da publicação, verifique o log `UserCreatedEvent processado` e, se estiver usando MailHog, abra `http://localhost:8025`. Para entrega no Invertexto, o consumer também precisa conseguir autenticar no SMTP externo.
+Confirme em **Queues and Streams** → `notifications-user-created` que existe um consumer. O `userId` e o `email` publicados serão projetados no banco do Notifications e o endereço receberá a mensagem de boas-vindas. Para entrega externa, o SMTP precisa estar configurado para um provedor real.
+
+O `UserCreatedEvent` também atualiza a projeção local `user_email_contacts`, usada pelo fluxo real de confirmação de compra. Assim, `PaymentProcessedEvent` continua contendo apenas `UserId`; Notifications resolve o endereço sem espalhar e-mail pelo evento financeiro. O UsersAPI analisado ainda precisa publicar `UserEmailUpdatedEvent` quando o endereço mudar para manter essa projeção atualizada. Até essa mudança existir no produtor, novos cadastros já abastecem a projeção.
+
+### Testar confirmação de compra com destinatário livre
+
+Em Development, publique JSON no exchange `PurchaseNotificationTestEvent` (routing key vazia, `content_type=application/json`). Esse evento de teste tem exchange e fila próprios (`notifications-purchase-test`) e aceita o e-mail destinatário no próprio JSON. Ele exercita o envio de confirmação no Notifications sem alterar o contrato financeiro consumido também pelo Catalog:
+
+```json
+{
+  "eventId": "dbfe6954-a2c6-43bb-bbcc-ffb146f861bb",
+  "correlationId": "f96e5461-839e-4700-8bf9-6437ad7d5ca8",
+  "occurredAt": "2026-10-22T12:00:00Z",
+  "version": 1,
+  "userId": "ae4b3272-d514-43cb-8763-91f1a5d8bc07",
+  "orderId": "4c11d019-a8d4-4538-b9da-a201da72045e",
+  "gameId": "574ad612-723c-4b4e-9f65-02f5a087ae54",
+  "amount": 59.90,
+  "currency": "BRL",
+  "email": "destinatario-escolhido@exemplo.com"
+}
+```
+
+Esse evento só é registrado quando `Messaging:EnablePurchaseNotificationTestEndpoint=true`, configuração habilitada em `appsettings.Development.json`. Com MailHog, confira em `http://localhost:8025`; com SMTP real, a mensagem será enviada ao endereço do JSON.
+
+Esse teste valida o envio e o destinatário variáveis no Notifications, mas não simula um pagamento real. Para verificar o caminho de compra, crie/publique primeiro um `UserCreatedEvent` para popular `user_email_contacts`; depois publique um `PaymentProcessedEvent` aprovado usando o mesmo `userId`. Esse evento financeiro não deve conter `email`.
+
+Para preparar somente a projeção sem enviar boas-vindas, o Notifications também consome `UserEmailUpdatedEvent` no exchange `UserEmailUpdatedEvent`, com os campos `eventId`, `correlationId`, `occurredAt`, `version`, `userId` e `email`. Esse contrato já é aceito pelo Notifications, mas o UsersAPI ainda precisa ser atualizado para publicá-lo quando um e-mail for alterado.
 
 ## Eventos
 
 | Evento | Uso |
 |---|---|
-| `UserCreatedEvent` | Enviar e-mail de boas-vindas |
-| `PaymentProcessedEvent` | Se `Approved`, processar confirmação de compra |
+| `UserCreatedEvent` | Projetar o e-mail do usuário e enviar boas-vindas |
+| `UserEmailUpdatedEvent` | Atualizar o e-mail na projeção do Notifications |
+| `PaymentProcessedEvent` | Se `Approved`, resolver destinatário pelo `UserId` e enviar confirmação |
+| `PurchaseNotificationTestEvent` | Testar confirmação com destinatário do JSON, somente em Development |
 
-O serviço reage a eventos: não coordena outros serviços e não acessa os bancos de Users, Catalog ou Payments.
+O serviço reage a eventos e não acessa diretamente os bancos de Users, Catalog ou Payments. A tabela `user_email_contacts` é uma projeção própria do Notifications.
 
 ## Tecnologia
 
 - .NET 8 (ASP.NET Core)
-- **MassTransit + RabbitMQ** (Card 06 — #49): decisão **assumida como aprovada**. O bus já está registrado em `Infrastructure/IoC/DependencyInjection.cs`, mas **sem nenhum consumer** — isso entra em C26/C27. Se o grupo desaprovar essa biblioteca, ver "Reverter a decisão de mensageria" abaixo.
-- Consumers (quando existirem) executam em background pelo host genérico (`IHostedService`, via MassTransit)
+- **MassTransit + RabbitMQ** (Card 06 — #49), com consumers para cadastro, alteração de e-mail, pagamento e teste local.
+- Consumers executam em background pelo host genérico (`IHostedService`, via MassTransit).
 
 ## Estrutura
 
@@ -87,7 +149,7 @@ curl -i http://localhost:5210/health
 dotnet test
 ```
 
-O serviço sobe e o `/health` responde `200` **mesmo sem um RabbitMQ real disponível** — o endpoint ignora os health checks registrados (`Predicate = _ => false`) e a conexão do MassTransit é assíncrona (`MassTransitHostOptions.WaitUntilStarted = false`), então não bloqueia o startup. Isso é esperado nesta fase: a infraestrutura de RabbitMQ ainda será provisionada em cards futuros. Os warnings de `Connection Failed` no log são esperados e não indicam falha do serviço.
+O `/health` confirma que o processo está ativo, não que RabbitMQ, PostgreSQL ou SMTP estão prontos. A conexão do MassTransit é assíncrona (`MassTransitHostOptions.WaitUntilStarted = false`), então falhas do broker aparecem nos logs sem bloquear o startup. No Compose, o PostgreSQL é aguardado e as migrations são aplicadas antes da API iniciar.
 
 Para testar a conexão de verdade em ambiente local, suba um RabbitMQ avulso (fora deste repositório, que não cria Dockerfile/Compose por escopo):
 

@@ -4,6 +4,7 @@ x-notifications-config: &notifications-config
   ASPNETCORE_ENVIRONMENT: Development
   ASPNETCORE_HTTP_PORTS: "8080"
   Swagger__Enabled: "true"
+  Database__ApplyMigrationsOnStartup: "true"
   RabbitMq__Host: rabbitmq
   RabbitMq__Port: "5672"
   RabbitMq__VirtualHost: /
@@ -11,14 +12,13 @@ x-notifications-config: &notifications-config
   RabbitMq__Password: ${RABBITMQ_PASSWORD:-Rabbit_Notif_Demo_2026!}
   RabbitMq__UseTls: "false"
   ConnectionStrings__NotificationsDatabase: "Host=postgres;Port=5432;Database=fcg_notifications;Username=${POSTGRES_USER:-fcg_notifications_demo};Password=${POSTGRES_PASSWORD:-NotifDb_Demo_2026!}"
-  # Fallback local para MailHog; sobrescreva no .env para entrega por provedor real.
-  Smtp__Host: ${SMTP_HOST:-smtp-dev}
-  Smtp__Port: ${SMTP_PORT:-1025}
-  Smtp__User: ${SMTP_USER:-}
-  Smtp__Password: ${SMTP_PASSWORD:-}
-  Smtp__From: ${SMTP_FROM:-no-reply@fcgnotifications.local}
-  Smtp__SecureSocketOptions: ${SMTP_SECURE_SOCKET_OPTIONS:-None}
-  Notifications__DevelopmentTestRecipient: ${NOTIFICATIONS_TEST_RECIPIENT:-}
+  # Perfil padrão seguro: todas as mensagens ficam no MailHog local.
+  Smtp__Host: smtp-dev
+  Smtp__Port: "1025"
+  Smtp__User: ""
+  Smtp__Password: ""
+  Smtp__From: no-reply@fcgnotifications.local
+  Smtp__SecureSocketOptions: None
 
 services:
   postgres:
@@ -47,7 +47,7 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-Rabbit_Notif_Demo_2026!}
     ports:
       - "127.0.0.1:5672:5672"
-      - "127.0.0.1:${FCG_RABBIT_MANAGEMENT_PORT:-15672}:15672"
+      - "${FCG_RABBIT_MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${FCG_RABBIT_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq-dados:/var/lib/rabbitmq
     healthcheck:
@@ -83,6 +83,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      smtp-dev:
+        condition: service_started
     networks:
       - fcg-interna
     logging:
