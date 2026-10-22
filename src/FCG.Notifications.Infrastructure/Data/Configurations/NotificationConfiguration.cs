@@ -32,9 +32,17 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
             .HasMaxLength(320);
 
         builder.Property(notification => notification.CreatedAt).IsRequired();
-
-        // Unicidade de EventId + Type.
-        builder.HasIndex(notification => new { notification.EventId, notification.Type })
+        builder.Property(n => n.BusinessOperationId).HasMaxLength(200).IsRequired();
+        builder.Property(n => n.LogicalRecipientId).HasMaxLength(200).IsRequired();
+        builder.Property(n => n.SmtpDestinationId).HasMaxLength(100).IsRequired();
+        builder.Property(n => n.Subject).HasMaxLength(998);
+        builder.Property(n => n.FailureCode).HasMaxLength(64);
+        builder.Property(n => n.ReservationToken).IsConcurrencyToken();
+        builder.Property(n => n.Status).IsConcurrencyToken();
+        builder.HasIndex(n => new { n.BusinessOperationId, n.Type, n.LogicalRecipientId, n.SmtpDestinationId })
             .IsUnique();
+        builder.HasIndex(n => new { n.Status, n.NextAttemptAt });
+        builder.HasIndex(n => new { n.Status, n.ReservationExpiresAt });
+        builder.HasIndex(n => new { n.EventId, n.Type });
     }
 }
