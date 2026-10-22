@@ -1,5 +1,4 @@
 using FCG.Notifications.Application.Abstractions;
-using FCG.Notifications.Domain.Notifications.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace FCG.Notifications.Infrastructure.Data;
@@ -18,16 +17,22 @@ public sealed class UserEmailRepository(NotificationsDbContext dbContext) : IUse
         DateTimeOffset updatedAt,
         CancellationToken cancellationToken)
     {
-        var contact = await dbContext.UserEmailContacts.FindAsync([userId], cancellationToken);
-        if (contact is null)
-        {
-            dbContext.UserEmailContacts.Add(new UserEmailContact(userId, email, updatedAt));
-        }
-        else if (updatedAt >= contact.UpdatedAt)
-        {
-            contact.UpdateEmail(email, updatedAt);
-        }
+        if (userId == Guid.Empty)
+            throw new ArgumentException("UserId must not be empty.", nameof(userId));
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        var normalizedEmail = email.Trim();
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        // Empate: vence o maior endereço na collation C, independentemente da ordem de chegada.
+        // Não infere cronologia entre eventos de mesma data. Preserva casing e normalização existentes.
+        // Usa a transação do contexto, se houver; não chama SaveChanges nem faz commit independente.
+        await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO user_email_contacts ("UserId", "Email", "UpdatedAt")
+            VALUES ({userId}, {normalizedEmail}, {updatedAt.ToUniversalTime()})
+            ON CONFLICT ("UserId") DO UPDATE
+            SET "Email" = EXCLUDED."Email", "UpdatedAt" = EXCLUDED."UpdatedAt"
+            WHERE EXCLUDED."UpdatedAt" > user_email_contacts."UpdatedAt"
+               OR (EXCLUDED."UpdatedAt" = user_email_contacts."UpdatedAt"
+                   AND EXCLUDED."Email" COLLATE "C" > user_email_contacts."Email" COLLATE "C")
+            """, cancellationToken);
     }
 }
