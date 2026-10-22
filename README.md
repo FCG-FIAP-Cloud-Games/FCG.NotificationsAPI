@@ -2,37 +2,42 @@
 
 Microsserviço da FCG responsável por consumir eventos de domínio e enviar notificações por SMTP.
 
-## Modos de envio de email
+## Entrega duplicada para MailHog e email real
 
-Há dois modos explícitos no Compose. O padrão é **MailHog**, que captura as mensagens e não as entrega a caixas externas. O envio real só é ativado ao incluir o arquivo `docker-compose.smtp-real.yml`.
+Cada evento que gera uma notificação envia a mesma mensagem para dois destinos na mesma tentativa: MailHog, para inspeção local, e o servidor SMTP real configurado no `.env`, para validar a entrega ao email indicado no evento. O MailHog continua disponível em [http://localhost:8025](http://localhost:8025), e o provedor SMTP entrega a cópia à caixa real.
 
-### Testes locais com MailHog (padrão)
+Os valores comuns de desenvolvimento (portas, URLs internas, bancos, RabbitMQ, MailHog e configurações JWT) já estão no Compose. Cada membro deve copiar `.env.example` para `.env` e configurar `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` e `SMTP_SECURE_SOCKET_OPTIONS` com credenciais SMTP próprias. O remetente deve ser autorizado pelo provedor. Na porta 587 use `StartTls`; na porta 465 use `SslOnConnect`. A senha SMTP fica fora do Compose para não ser exposta no repositório. Não inclua credenciais nos eventos RabbitMQ.
 
-```bash
-docker compose up -d --build --force-recreate
-```
-
-A API usa `smtp-dev:1025`; veja as mensagens em [http://localhost:8025](http://localhost:8025). Este modo continua isolado mesmo que o `.env` contenha credenciais SMTP reais.
-
-### Teste de entrega em caixa real
-
-Configure no `.env` as variáveis `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` e `SMTP_SECURE_SOCKET_OPTIONS`. `SMTP_FROM` deve ser autorizado pelo provedor. Na porta 587 use `StartTls`; na porta 465 use `SslOnConnect`. O `.env.example` mostra os nomes e formatos esperados; não versione credenciais reais.
-
-Ative o modo real explicitamente:
+Depois de configurar o `.env`, suba a composição e reconstrua Notifications para incluir o sender de múltiplos destinos:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.smtp-real.yml up -d --build --force-recreate notificationsapi
+docker compose -f docker-compose.integrated.yml up -d --build
 ```
 
-O Compose exige host, usuário, senha e remetente configurados antes de iniciar este modo. Depois, publique o evento de teste com o endereço que deve receber a mensagem. Confira os logs da API para verificar o aceite do SMTP e a caixa de entrada/spam para confirmar a entrega. O MailHog não recebe cópia nesse modo.
+O RabbitMQ repete uma mensagem caso um dos destinos falhe. Como SMTP e MailHog não compartilham uma transação, se um destino aceitar a mensagem e o outro falhar, uma repetição pode gerar cópia duplicada no destino que já aceitou. Os logs registram o resultado de cada destino separadamente.
 
-Para voltar ao modo seguro local, recrie a API apenas com o arquivo padrão:
+## Compose integrado dos quatro microsserviços
+
+O arquivo [`docker-compose.integrated.yml`](docker-compose.integrated.yml) sobe UsersAPI, CatalogAPI, PaymentsAPI e NotificationsAPI com um PostgreSQL e um RabbitMQ compartilhados. Cada API usa seu próprio banco (`fcg_users_demo`, `fcg_catalog`, `fcg_payments` e `fcg_notifications`). O serviço `postgres-init` cria os três bancos adicionais de forma idempotente; UsersAPI executa suas migrations e prepara o par de chaves JWT, e CatalogAPI aguarda UsersAPI ficar saudável antes de carregar a chave pública compartilhada. O projeto Compose se chama `fcg-integrated` e usa volumes próprios; os dados de outras stacks permanecem separados e preservados.
+
+Para iniciar ou atualizar a composição integrada sem apagar os volumes existentes:
 
 ```bash
-docker compose up -d --force-recreate notificationsapi
+docker compose -f docker-compose.integrated.yml up -d --build
 ```
 
-As credenciais ficam apenas no `.env` local, que não deve ser commitado ou compartilhado. Não cole senhas SMTP nos eventos RabbitMQ: o evento contém somente o email destinatário.
+Interfaces locais:
+
+| Serviço | URL |
+|---|---|
+| UsersAPI Swagger | `http://localhost:5088/swagger` |
+| CatalogAPI Swagger | `http://localhost:5081/swagger` |
+| PaymentsAPI Swagger | `http://localhost:5082/swagger` |
+| NotificationsAPI Swagger | `http://localhost:5083/swagger` |
+| RabbitMQ Management | `http://localhost:15672` |
+| MailHog | `http://localhost:8025` |
+
+O `.env.example` contém as variáveis de portas, credenciais de demonstração compartilhadas e configuração SMTP. Copie-o para `.env` e substitua as credenciais conforme necessário; o `.env` local não deve ser enviado ao Git.
 
 ### Payloads de teste no RabbitMQ Management
 
@@ -47,7 +52,7 @@ Os JSONs prontos ficam em [`docs/test-payloads/`](docs/test-payloads/):
 
 No painel em `http://localhost:15672`, abra a exchange indicada, deixe **Routing key** vazia, preencha **Properties** com `content_type` = `application/json` e cole o conteúdo do arquivo em **Payload**. Para testar o pagamento, publique primeiro `user-created.json`, aguarde seu processamento e então publique `payment-processed.json`; os dois arquivos usam o mesmo `userId`. O evento `PurchaseNotificationTestEvent` pode ser testado independentemente.
 
-Os endereços `example.net` nos exemplos são marcadores: substitua-os por uma caixa controlada por você antes do modo SMTP real. Ao repetir um evento, gere novos `eventId`, `correlationId` e IDs de pagamento/pedido; mantenha o mesmo `userId` entre cadastro e pagamento.
+Os endereços `example.net` nos exemplos são marcadores: substitua-os por uma caixa controlada por você, pois cada evento também é entregue ao SMTP real. Ao repetir um evento, gere novos `eventId`, `correlationId` e IDs de pagamento/pedido; mantenha o mesmo `userId` entre cadastro e pagamento.
 
 No ambiente local do Compose, `notificationsapi` aplica as migrations do banco ao iniciar (`Database__ApplyMigrationsOnStartup=true`). A API de produção não aplica migrations automaticamente; execute-as no processo de implantação.
 
@@ -59,7 +64,7 @@ curl -i -X POST http://localhost:5083/api/TestNotification/user-created \
   -d '{"name":"Teste","email":"seu-email@exemplo.com"}'
 ```
 
-O endpoint publica um `UserCreatedEvent` válido no RabbitMQ. A resposta confirma a publicação; a entrega depende do consumidor e do SMTP configurado. Consulte os logs com `docker compose logs -f notificationsapi` se o consumidor ou o SMTP reportar falha. O serviço `smtp-dev` continua disponível para testes locais, mas não entrega mensagens a caixas de e-mail reais.
+O endpoint publica um `UserCreatedEvent` válido no RabbitMQ. A resposta confirma a publicação; consulte o MailHog e a caixa real para confirmar as duas entregas. Acompanhe os logs com `docker compose -f docker-compose.integrated.yml logs -f notificationsapi` para ver o resultado por destino.
 
 Por padrão, o painel RabbitMQ fica acessível somente no próprio computador (`127.0.0.1`). Para permitir que colegas na mesma rede local publiquem eventos no ambiente que está rodando neste computador, configure `FCG_RABBIT_MANAGEMENT_BIND_ADDRESS=0.0.0.0` no `.env` e recrie o RabbitMQ. Eles poderão abrir `http://IP-DO-COMPUTADOR:15672` e entrar com as credenciais RabbitMQ do `.env`. Use isso somente em uma rede confiável; não exponha a porta de gerenciamento diretamente à internet. O SMTP permanece configurado apenas no serviço da API, portanto não é necessário compartilhar a senha de app do Gmail com quem apenas publica eventos.
 
@@ -79,7 +84,7 @@ O consumer `notifications-user-created` aceita JSON simples (`application/json`)
 }
 ```
 
-Confirme em **Queues and Streams** → `notifications-user-created` que existe um consumer. O `userId` e o `email` publicados serão projetados no banco do Notifications e o endereço receberá a mensagem de boas-vindas. Para entrega externa, o SMTP precisa estar configurado para um provedor real.
+Confirme em **Queues and Streams** → `notifications-user-created` que existe um consumer. O `userId` e o `email` publicados serão projetados no banco do Notifications e o endereço receberá a mensagem de boas-vindas tanto no MailHog quanto no provedor real.
 
 O `UserCreatedEvent` também atualiza a projeção local `user_email_contacts`, usada pelo fluxo real de confirmação de compra. Assim, `PaymentProcessedEvent` continua contendo apenas `UserId`; Notifications resolve o endereço sem espalhar e-mail pelo evento financeiro. O UsersAPI analisado ainda precisa publicar `UserEmailUpdatedEvent` quando o endereço mudar para manter essa projeção atualizada. Até essa mudança existir no produtor, novos cadastros já abastecem a projeção.
 
@@ -102,7 +107,7 @@ Em Development, publique JSON no exchange `PurchaseNotificationTestEvent` (routi
 }
 ```
 
-Esse evento só é registrado quando `Messaging:EnablePurchaseNotificationTestEndpoint=true`, configuração habilitada em `appsettings.Development.json`. Com MailHog, confira em `http://localhost:8025`; com SMTP real, a mensagem será enviada ao endereço do JSON.
+Esse evento só é registrado quando `Messaging:EnablePurchaseNotificationTestEndpoint=true`, configuração habilitada em `appsettings.Development.json`. Confira a cópia no MailHog e no endereço real informado no JSON.
 
 Esse teste valida o envio e o destinatário variáveis no Notifications, mas não simula um pagamento real. Para verificar o caminho de compra, crie/publique primeiro um `UserCreatedEvent` para popular `user_email_contacts`; depois publique um `PaymentProcessedEvent` aprovado usando o mesmo `userId`. Esse evento financeiro não deve conter `email`.
 

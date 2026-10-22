@@ -1,0 +1,222 @@
+name: fcg-integrated
+
+x-rabbitmq-config: &rabbitmq-config
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Port: "5672"
+  RabbitMq__VirtualHost: /
+  RabbitMq__Username: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+  RabbitMq__Password: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+  RabbitMq__UseTls: "false"
+
+x-postgres-credentials: &postgres-credentials
+  POSTGRES_USER: ${FCG_DEMO_POSTGRES_USER:-fcg_users_demo}
+  POSTGRES_PASSWORD: ${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      <<: *postgres-credentials
+      POSTGRES_DB: fcg_users_demo
+    volumes:
+      - postgres-dados:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d fcg_users_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  postgres-init:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/scripts/create-databases.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${FCG_DEMO_POSTGRES_USER:-fcg_users_demo}
+      PGPASSWORD: ${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!}
+      PGDATABASE: fcg_users_demo
+    volumes:
+      - ./docker/postgres/create-databases.sh:/scripts/create-databases.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - fcg-interna
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+      RABBITMQ_DEFAULT_PASS: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "${FCG_RABBIT_MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${FCG_RABBIT_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-dados:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  smtp-dev:
+    image: mailhog/mailhog
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  usersapi:
+    image: fgcprojetofiap/users-api:1.4
+    platform: linux/amd64
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      Swagger__Enabled: "true"
+      DemonstracaoLocal__Habilitada: "true"
+      Outbox__Enabled: "true"
+      ConnectionStrings__UsersDatabase: "Host=postgres;Port=5432;Database=fcg_users_demo;Username=${FCG_DEMO_POSTGRES_USER:-fcg_users_demo};Password=${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!};Include Error Detail=false"
+      Jwt__Issuer: FIAP.CloudGames
+      Jwt__Audience: FIAP.CloudGames.Api
+      Jwt__AccessTokenExpirationMinutes: "15"
+      Jwt__RefreshTokenExpirationDays: "7"
+      Jwt__Signing__ActiveKeyId: users-demo-v1
+      Jwt__Signing__PrivateKeyPath: /data/jwt/private.pem
+      Jwt__Validation__Keys__0__KeyId: users-demo-v1
+      Jwt__Validation__Keys__0__PublicKeyPath: /data/jwt/public.pem
+      <<: *rabbitmq-config
+    ports:
+      - "127.0.0.1:${FCG_USERS_HTTP_PORT:-5088}:8080"
+    volumes:
+      - jwt-chaves:/data/jwt
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  catalogapi:
+    image: fgcprojetofiap/catalog-api:1.0.2
+    platform: linux/amd64
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      DemonstracaoLocal__Habilitada: "true"
+      ConnectionStrings__CatalogDatabase: "Host=postgres;Port=5432;Database=fcg_catalog;Username=${FCG_DEMO_POSTGRES_USER:-fcg_users_demo};Password=${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!};Include Error Detail=false"
+      Jwt__Issuer: FIAP.CloudGames
+      Jwt__Audience: FIAP.CloudGames.Api
+      Jwt__PublicKeys__0__Kid: users-demo-v1
+      Jwt__PublicKeys__0__PublicKeyPath: /data/jwt/public.pem
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: /
+      RabbitMq__Username: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+      RabbitMq__Password: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+      RabbitMq__UseTls: "false"
+      RabbitMq__ConsumerEnabled: "true"
+    ports:
+      - "127.0.0.1:${FCG_CATALOG_HTTP_PORT:-5081}:8080"
+    volumes:
+      - jwt-chaves:/data/jwt:ro
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      usersapi:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  paymentsapi:
+    image: fgcprojetofiap/payments-api:1.2
+    platform: linux/amd64
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      DemonstracaoLocal__Habilitada: "true"
+      ConnectionStrings__PaymentsDatabase: "Host=postgres;Port=5432;Database=fcg_payments;Username=${FCG_DEMO_POSTGRES_USER:-fcg_users_demo};Password=${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!};Include Error Detail=false"
+      RabbitMq__Enabled: "true"
+      RabbitMq__Host: "rabbitmq://rabbitmq"
+      RabbitMq__Username: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+      RabbitMq__Password: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+      PaymentSimulation__ApprovalLimit: "100.00"
+    ports:
+      - "127.0.0.1:${FCG_PAYMENTS_HTTP_PORT:-5082}:8080"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+  notificationsapi:
+    build: .
+    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.4}
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      Swagger__Enabled: "true"
+      Database__ApplyMigrationsOnStartup: "true"
+      ConnectionStrings__NotificationsDatabase: "Host=postgres;Port=5432;Database=fcg_notifications;Username=${FCG_DEMO_POSTGRES_USER:-fcg_users_demo};Password=${FCG_DEMO_POSTGRES_PASSWORD:-UsersDb_Demo_2026!};Include Error Detail=false"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: /
+      RabbitMq__Username: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+      RabbitMq__Password: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+      RabbitMq__UseTls: "false"
+      Messaging__EnablePurchaseNotificationTestEndpoint: "true"
+      # Configurações comuns ficam no Compose. As credenciais SMTP reais vêm do
+      # .env local e não devem ser versionadas neste arquivo.
+      Smtp__Destinations__MailHog__Host: smtp-dev
+      Smtp__Destinations__MailHog__Port: "1025"
+      Smtp__Destinations__MailHog__User: ""
+      Smtp__Destinations__MailHog__Password: ""
+      Smtp__Destinations__MailHog__From: no-reply@fcgnotifications.local
+      Smtp__Destinations__MailHog__SecureSocketOptions: None
+      Smtp__Destinations__TemporaryEmail__Host: ${SMTP_HOST:?Configure SMTP_HOST in .env}
+      Smtp__Destinations__TemporaryEmail__Port: "${SMTP_PORT:-587}"
+      Smtp__Destinations__TemporaryEmail__User: ${SMTP_USER:?Configure SMTP_USER in .env}
+      Smtp__Destinations__TemporaryEmail__Password: ${SMTP_PASSWORD:?Configure SMTP_PASSWORD in .env}
+      Smtp__Destinations__TemporaryEmail__From: ${SMTP_FROM:?Configure SMTP_FROM in .env}
+      Smtp__Destinations__TemporaryEmail__SecureSocketOptions: ${SMTP_SECURE_SOCKET_OPTIONS:-StartTls}
+    ports:
+      - "127.0.0.1:${FCG_NOTIFICATIONS_HTTP_PORT:-5083}:8080"
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      smtp-dev:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - fcg-interna
+
+networks:
+  fcg-interna:
+    driver: bridge
+
+volumes:
+  postgres-dados:
+  rabbitmq-dados:
+  jwt-chaves:
