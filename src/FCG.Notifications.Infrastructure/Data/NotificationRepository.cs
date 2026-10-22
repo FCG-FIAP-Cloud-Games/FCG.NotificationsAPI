@@ -7,6 +7,18 @@ namespace FCG.Notifications.Infrastructure.Data;
 
 public sealed class NotificationRepository(NotificationsDbContext dbContext) : INotificationRepository
 {
+    public Task<List<Guid>> GetEligibleIdsAsync(int limit, CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
+        return dbContext.Notifications.FromSqlInterpolated($"""
+            SELECT * FROM notifications
+            WHERE "Subject" IS NOT NULL AND "Body" IS NOT NULL
+              AND (("Status" = 'Pending' AND ("NextAttemptAt" IS NULL OR "NextAttemptAt" <= clock_timestamp()))
+                OR ("Status" = 'Failed' AND "NextAttemptAt" <= clock_timestamp()))
+            ORDER BY "CreatedAt", "Id" LIMIT {limit}
+            """).AsNoTracking().Select(n => n.Id).ToListAsync(cancellationToken);
+    }
+
     // SQL parametrizado usa o relógio do PostgreSQL. As operações não usam entidades rastreadas.
     public async Task<Notification?> TryAcquireAsync(Guid id, TimeSpan lease, CancellationToken cancellationToken)
     {

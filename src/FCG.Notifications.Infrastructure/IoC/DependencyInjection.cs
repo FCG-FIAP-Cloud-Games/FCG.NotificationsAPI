@@ -44,6 +44,13 @@ public static class DependencyInjection
         services.AddScoped<IUserEmailRepository, UserEmailRepository>();
 
         services.AddScoped<INotificationSender, SmtpNotificationSender>();
+        var dispatcherOptions = configuration.GetSection("NotificationsDispatcher").Get<NotificationsDispatcherOptions>()
+            ?? new NotificationsDispatcherOptions();
+        if (dispatcherOptions.Enabled) dispatcherOptions.Validate();
+        services.AddSingleton(dispatcherOptions);
+        services.AddScoped<IPersistentSmtpTransport, PersistentSmtpTransport>();
+        services.AddScoped<PersistentNotificationDispatcher>();
+        services.AddHostedService<NotificationsDispatcherWorker>();
         services.AddScoped<IWelcomeEmailService, WelcomeEmailService>();
         services.AddScoped<IPurchaseConfirmationService, PurchaseConfirmationService>();
 

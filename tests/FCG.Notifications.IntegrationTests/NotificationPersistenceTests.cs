@@ -238,7 +238,7 @@ public class NotificationPersistenceTests
     private static Task<int> ExpireAsync(NotificationsDbContext db, Guid id) =>
         db.Database.ExecuteSqlInterpolatedAsync($"UPDATE notifications SET \"ReservationExpiresAt\" = clock_timestamp() - interval '1 second' WHERE \"Id\" = {id}", Ct);
 
-    private sealed class TestDatabase(string connectionString, string schema) : IAsyncDisposable
+    internal sealed class TestDatabase(string connectionString, string schema) : IAsyncDisposable
     {
         public NotificationsDbContext Open() => new(new DbContextOptionsBuilder<NotificationsDbContext>()
             .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", schema)).Options);
