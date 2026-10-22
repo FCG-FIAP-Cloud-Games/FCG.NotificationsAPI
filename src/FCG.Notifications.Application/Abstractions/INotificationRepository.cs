@@ -5,6 +5,7 @@ namespace FCG.Notifications.Application.Abstractions;
 
 public interface INotificationRepository
 {
+    Task<bool> TryAddAsync(Notification notification, CancellationToken cancellationToken);
     Task<List<Guid>> GetEligibleIdsAsync(int limit, CancellationToken cancellationToken);
     Task<Notification?> TryAcquireAsync(Guid id, TimeSpan lease, CancellationToken cancellationToken);
     Task<bool> TryStartSendingAsync(Guid id, Guid token, CancellationToken cancellationToken);
