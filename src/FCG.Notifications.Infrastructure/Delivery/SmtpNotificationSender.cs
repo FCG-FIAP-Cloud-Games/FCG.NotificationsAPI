@@ -12,10 +12,19 @@ public sealed partial class SmtpNotificationSender : INotificationSender
     private readonly IReadOnlyList<SmtpDestination> _destinations;
     private readonly ILogger<SmtpNotificationSender> _logger;
     private readonly Func<ISmtpClient> _createClient;
+    private readonly bool _persistentDispatchEnabled;
 
     public SmtpNotificationSender(IConfiguration configuration, ILogger<SmtpNotificationSender> logger)
         : this(configuration, logger, () => new SmtpClient())
     {
+    }
+
+    public SmtpNotificationSender(IConfiguration configuration, ILogger<SmtpNotificationSender> logger,
+        NotificationsDispatcherOptions dispatcherOptions)
+        : this(configuration, logger)
+    {
+        // Mesmo snapshot do worker: reload de configuração não habilita os dois modos.
+        _persistentDispatchEnabled = dispatcherOptions.Enabled;
     }
 
     public SmtpNotificationSender(
@@ -26,6 +35,7 @@ public sealed partial class SmtpNotificationSender : INotificationSender
         ArgumentNullException.ThrowIfNull(createClient);
         _createClient = createClient;
         _logger = logger;
+        _persistentDispatchEnabled = configuration.GetValue<bool>("NotificationsDispatcher:Enabled");
         var configuredDestinations = configuration.GetSection("Smtp:Destinations").GetChildren()
             .Select(section => CreateDestination(section.Key, section))
             .ToArray();
@@ -48,6 +58,8 @@ public sealed partial class SmtpNotificationSender : INotificationSender
 
     public async Task SendAsync(NotificationMessage message, CancellationToken cancellationToken = default)
     {
+        if (_persistentDispatchEnabled)
+            throw new InvalidOperationException("Envio direto desabilitado enquanto o dispatcher persistente está habilitado.");
         var failures = new List<Exception>();
         foreach (var destination in _destinations)
         {
