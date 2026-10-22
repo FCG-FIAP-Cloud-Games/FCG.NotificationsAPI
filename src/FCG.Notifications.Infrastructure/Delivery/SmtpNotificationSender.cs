@@ -11,9 +11,20 @@ public sealed partial class SmtpNotificationSender : INotificationSender
 {
     private readonly IReadOnlyList<SmtpDestination> _destinations;
     private readonly ILogger<SmtpNotificationSender> _logger;
+    private readonly Func<ISmtpClient> _createClient;
 
     public SmtpNotificationSender(IConfiguration configuration, ILogger<SmtpNotificationSender> logger)
+        : this(configuration, logger, () => new SmtpClient())
     {
+    }
+
+    public SmtpNotificationSender(
+        IConfiguration configuration,
+        ILogger<SmtpNotificationSender> logger,
+        Func<ISmtpClient> createClient)
+    {
+        ArgumentNullException.ThrowIfNull(createClient);
+        _createClient = createClient;
         _logger = logger;
         var configuredDestinations = configuration.GetSection("Smtp:Destinations").GetChildren()
             .Select(section => CreateDestination(section.Key, section))
@@ -51,7 +62,6 @@ public sealed partial class SmtpNotificationSender : INotificationSender
             }
             catch (Exception exception)
             {
-                LogSmtpFailed(_logger, exception, message.Recipient, destination.Name, destination.Host, destination.Port);
                 failures.Add(exception);
             }
         }
@@ -89,21 +99,47 @@ public sealed partial class SmtpNotificationSender : INotificationSender
         email.Subject = message.Subject;
         email.Body = new TextPart("plain") { Text = message.Body };
 
-        using var smtp = new SmtpClient();
-        await smtp.ConnectAsync(destination.Host, destination.Port, destination.SocketOptions, cancellationToken);
-        if (!string.IsNullOrEmpty(destination.User))
-            await smtp.AuthenticateAsync(destination.User, destination.Password, cancellationToken);
+        using var smtp = _createClient();
+        var stage = "conexão";
+        try
+        {
+            await smtp.ConnectAsync(destination.Host, destination.Port, destination.SocketOptions, cancellationToken);
+            if (!string.IsNullOrEmpty(destination.User))
+            {
+                stage = "autenticação";
+                await smtp.AuthenticateAsync(destination.User, destination.Password, cancellationToken);
+            }
 
-        var response = await smtp.SendAsync(email, cancellationToken);
-        LogSmtpAccepted(_logger, message.Recipient, destination.Name, destination.Host, destination.Port, response);
-        await smtp.DisconnectAsync(true, cancellationToken);
+            stage = "envio (resultado de entrega pode ser incerto)";
+            await smtp.SendAsync(email, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // Mensagens de exceção/respostas SMTP podem conter endereços ou outros dados sensíveis.
+            LogSmtpFailed(_logger, stage, destination.Name, destination.Host, destination.Port, exception.GetType().Name);
+            throw;
+        }
+
+        LogSmtpAccepted(_logger, destination.Name, destination.Host, destination.Port);
+        try
+        {
+            await smtp.DisconnectAsync(true, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // A aceitação já foi confirmada. Inclusive cancelamento no QUIT não desfaz o envio.
+            LogSmtpDisconnectFailed(_logger, destination.Name, destination.Host, destination.Port, exception.GetType().Name);
+        }
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "SMTP aceitou a mensagem para {Recipient} no destino {Destination} ({SmtpHost}:{SmtpPort}). Resposta: {SmtpResponse}")]
-    private static partial void LogSmtpAccepted(ILogger logger, string recipient, string destination, string smtpHost, int smtpPort, string smtpResponse);
+    [LoggerMessage(Level = LogLevel.Information, Message = "SMTP aceitou a mensagem no destino {Destination} ({SmtpHost}:{SmtpPort}).")]
+    private static partial void LogSmtpAccepted(ILogger logger, string destination, string smtpHost, int smtpPort);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Falha no envio SMTP para {Recipient} no destino {Destination} ({SmtpHost}:{SmtpPort})")]
-    private static partial void LogSmtpFailed(ILogger logger, Exception exception, string recipient, string destination, string smtpHost, int smtpPort);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Falha SMTP na etapa {Stage} no destino {Destination} ({SmtpHost}:{SmtpPort}). Tipo: {ExceptionType}")]
+    private static partial void LogSmtpFailed(ILogger logger, string stage, string destination, string smtpHost, int smtpPort, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Falha de desconexão após aceitação SMTP no destino {Destination} ({SmtpHost}:{SmtpPort}). Envio permanece confirmado. Tipo: {ExceptionType}")]
+    private static partial void LogSmtpDisconnectFailed(ILogger logger, string destination, string smtpHost, int smtpPort, string exceptionType);
 
     private sealed record SmtpDestination(
         string Name,
