@@ -72,7 +72,7 @@ services:
 
   notificationsapi:
     build: .
-    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.1}
+    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.4}
     restart: unless-stopped
     environment:
       <<: *notifications-config
