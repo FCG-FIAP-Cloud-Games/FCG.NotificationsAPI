@@ -7,6 +7,7 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 {
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationReconciliationAudit> NotificationReconciliationAudits => Set<NotificationReconciliationAudit>();
     public DbSet<UserEmailContact> UserEmailContacts => Set<UserEmailContact>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -7,7 +7,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FCG.Notifications.Infrastructure.Data;
 
-public sealed class NotificationRepository(NotificationsDbContext dbContext) : INotificationRepository, INotificationOperationsQuery
+public sealed partial class NotificationRepository(NotificationsDbContext dbContext, INotificationReplaySafety? replaySafety = null)
+    : INotificationRepository, INotificationOperationsQuery, INotificationReconciliation
 {
     private static readonly Expression<Func<Notification, NotificationOperationsItem>> OperationsProjection = n => new(
         n.Id, n.Status, n.EventId, n.CorrelationId, n.BusinessOperationId, n.Type, n.SmtpDestinationId,
