@@ -7,6 +7,35 @@ namespace FCG.Notifications.Infrastructure.Data;
 
 public sealed class NotificationRepository(NotificationsDbContext dbContext) : INotificationRepository
 {
+    public async Task<bool> TryAddAsync(Notification notification, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        if (dbContext.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Persistir intenção exige transação explícita.");
+        if (notification.Status != NotificationStatus.Pending || notification.Subject is null || notification.Body is null)
+            throw new InvalidOperationException("A intenção deve estar Pending e conter assunto e corpo.");
+        return await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO notifications ("Id", "EventId", "CorrelationId", "UserId", "Type", "Destination", "Status",
+                "CreatedAt", "UpdatedAt", "BusinessOperationId", "LogicalRecipientId", "SmtpDestinationId", "Subject", "Body", "AttemptCount")
+            VALUES ({notification.Id}, {notification.EventId}, {notification.CorrelationId}, {notification.UserId},
+                {notification.Type.ToString()}, {notification.Destination}, 'Pending', {notification.CreatedAt}, {notification.UpdatedAt},
+                {notification.BusinessOperationId}, {notification.LogicalRecipientId}, {notification.SmtpDestinationId},
+                {notification.Subject}, {notification.Body}, 0)
+            ON CONFLICT ("BusinessOperationId", "Type", "LogicalRecipientId", "SmtpDestinationId") DO NOTHING
+            """, cancellationToken) == 1;
+    }
+
+    public async Task<List<Notification>> LockBusinessOperationAsync(string operationId, NotificationType type, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Reserva da operação de negócio exige transação explícita.");
+        var key = $"notifications:{type}:{operationId}";
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+        return await dbContext.Notifications.AsNoTracking()
+            .Where(n => n.BusinessOperationId == operationId && n.Type == type).ToListAsync(cancellationToken);
+    }
+
     public Task<List<Guid>> GetEligibleIdsAsync(int limit, CancellationToken cancellationToken)
     {
         if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));

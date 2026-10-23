@@ -5,6 +5,7 @@ namespace FCG.Notifications.Application.Notifications;
 
 public interface IWelcomeEmailService
 {
+    NotificationMessage CreateMessage(UserCreatedEvent userCreatedEvent);
     Task NotifyAsync(UserCreatedEvent userCreatedEvent, CancellationToken cancellationToken);
 }
 
@@ -14,7 +15,7 @@ public interface IWelcomeEmailService
 /// </summary>
 public sealed class WelcomeEmailService(INotificationSender sender) : IWelcomeEmailService
 {
-    public Task NotifyAsync(UserCreatedEvent userCreatedEvent, CancellationToken cancellationToken)
+    public NotificationMessage CreateMessage(UserCreatedEvent userCreatedEvent)
     {
         var message = new NotificationMessage
         (
@@ -23,6 +24,9 @@ public sealed class WelcomeEmailService(INotificationSender sender) : IWelcomeEm
             Body: $"Olá, {userCreatedEvent.Name}! Seu cadastro foi concluído com sucesso. Aproveite nossos serviços!"
         );
 
-        return sender.SendAsync(message, cancellationToken);
+        return message;
     }
+
+    public Task NotifyAsync(UserCreatedEvent userCreatedEvent, CancellationToken cancellationToken) =>
+        sender.SendAsync(CreateMessage(userCreatedEvent), cancellationToken);
 }
