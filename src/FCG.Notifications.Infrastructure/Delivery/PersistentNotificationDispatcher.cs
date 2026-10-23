@@ -37,7 +37,7 @@ public sealed partial class PersistentNotificationDispatcher(
         try
         {
             session = await transport.PrepareAsync(delivery.SmtpDestinationId,
-                new NotificationMessage(delivery.Destination, delivery.Subject!, delivery.Body!), attempt.Token);
+                new NotificationMessage(delivery.Destination, delivery.Subject!, delivery.Body!), delivery.SmtpMessageId, attempt.Token);
         }
         catch (Exception exception)
         {
@@ -60,7 +60,8 @@ public sealed partial class PersistentNotificationDispatcher(
                 return;
             }
             LogProgress(logger, id, "Sending", "SMTP_SEND_START", delivery.SmtpDestinationId, delivery.AttemptCount);
-            try { await session.SendAsync(attempt.Token); }
+            SmtpAcceptanceEvidence acceptance;
+            try { acceptance = await session.SendAsync(attempt.Token); }
             catch (Exception exception)
             {
                 LogFailure(logger, id, "SENDING_UNCERTAIN", exception.GetType().Name, "Sending", delivery.SmtpDestinationId, delivery.AttemptCount);
@@ -77,17 +78,40 @@ public sealed partial class PersistentNotificationDispatcher(
             {
                 try
                 {
-                    if (await repository.TryMarkSentAsync(id, token, confirmation.Token))
+                    if (await repository.TryMarkSentAsync(id, token, confirmation.Token, acceptance))
+                    {
                         LogProgress(logger, id, "Sent", "ACCEPTED_RECORDED", delivery.SmtpDestinationId, delivery.AttemptCount);
-                    else
-                        LogFailure(logger, id, "ACCEPTED_NOT_RECORDED", "ReservationUnavailable", "Unconfirmed", delivery.SmtpDestinationId, delivery.AttemptCount);
-                    return;
+                        return;
+                    }
                 }
                 catch (Exception exception)
                 {
-                    LogFailure(logger, id, "ACCEPTED_NOT_RECORDED", exception.GetType().Name, "Unconfirmed", delivery.SmtpDestinationId, delivery.AttemptCount);
-                    if (confirmation.IsCancellationRequested) return;
+                    LogFailure(logger, id, "SENT_WRITE_UNCONFIRMED", exception.GetType().Name, "Unconfirmed", delivery.SmtpDestinationId, delivery.AttemptCount);
                 }
+
+                // Orçamento independente: até um timeout de escrita pode ter ocorrido após commit.
+                try
+                {
+                    using var verification = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var result = await repository.ReadSentConfirmationAsync(id, token, verification.Token);
+                    if (result == SentConfirmation.ConfirmedByAttempt)
+                    {
+                        LogProgress(logger, id, "Sent", "ACCEPTED_ALREADY_RECORDED", delivery.SmtpDestinationId, delivery.AttemptCount);
+                        return;
+                    }
+                    if (result == SentConfirmation.StateChanged)
+                    {
+                        LogFailure(logger, id, "SENT_STATE_CHANGED", "AttemptNoLongerOwnsState", "Unconfirmed", delivery.SmtpDestinationId, delivery.AttemptCount);
+                        return;
+                    }
+                    if (retry == 2 || confirmation.IsCancellationRequested)
+                        LogFailure(logger, id, "ACCEPTED_NOT_RECORDED", "StillSending", "Sending", delivery.SmtpDestinationId, delivery.AttemptCount);
+                }
+                catch (Exception exception)
+                {
+                    LogFailure(logger, id, "SENT_CONFIRMATION_UNKNOWN", exception.GetType().Name, "Unconfirmed", delivery.SmtpDestinationId, delivery.AttemptCount);
+                }
+                if (confirmation.IsCancellationRequested) return;
             }
             // Se o banco permanecer indisponível, Sending expirará para Unknown.
         }
