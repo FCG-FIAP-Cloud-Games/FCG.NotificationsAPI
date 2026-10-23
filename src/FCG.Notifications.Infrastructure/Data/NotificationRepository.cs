@@ -54,11 +54,11 @@ public sealed partial class NotificationRepository(NotificationsDbContext dbCont
             throw new InvalidOperationException("A intenção deve estar Pending e conter assunto e corpo.");
         return await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO notifications ("Id", "EventId", "CorrelationId", "UserId", "Type", "Destination", "Status",
-                "CreatedAt", "UpdatedAt", "BusinessOperationId", "LogicalRecipientId", "SmtpDestinationId", "Subject", "Body", "AttemptCount")
+                "CreatedAt", "UpdatedAt", "BusinessOperationId", "LogicalRecipientId", "SmtpDestinationId", "Subject", "Body", "AttemptCount", "SmtpMessageId")
             VALUES ({notification.Id}, {notification.EventId}, {notification.CorrelationId}, {notification.UserId},
                 {notification.Type.ToString()}, {notification.Destination}, 'Pending', {notification.CreatedAt}, {notification.UpdatedAt},
                 {notification.BusinessOperationId}, {notification.LogicalRecipientId}, {notification.SmtpDestinationId},
-                {notification.Subject}, {notification.Body}, 0)
+                {notification.Subject}, {notification.Body}, 0, {notification.SmtpMessageId})
             ON CONFLICT ("BusinessOperationId", "Type", "LogicalRecipientId", "SmtpDestinationId") DO NOTHING
             """, cancellationToken) == 1;
     }
@@ -112,13 +112,25 @@ public sealed partial class NotificationRepository(NotificationsDbContext dbCont
               AND "ReservationExpiresAt" > clock_timestamp()
             """, cancellationToken) == 1;
 
-    public async Task<bool> TryMarkSentAsync(Guid id, Guid token, CancellationToken cancellationToken) =>
+    public async Task<bool> TryMarkSentAsync(Guid id, Guid token, CancellationToken cancellationToken, SmtpAcceptanceEvidence? acceptance = null) =>
         await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE notifications SET "Status" = 'Sent', "SentAt" = clock_timestamp(), "UpdatedAt" = clock_timestamp(),
+                "SentConfirmationToken" = {token}, "SmtpAcceptance" = {(acceptance == null ? null : acceptance.Value)},
                 "ReservationToken" = NULL, "ReservationExpiresAt" = NULL, "FailureCode" = NULL
             WHERE "Id" = {id} AND "ReservationToken" = {token} AND "Status" = 'Sending'
               AND "ReservationExpiresAt" > clock_timestamp()
             """, cancellationToken) == 1;
+
+    // Somente leitura, sem tracking: um Sent de outro token nunca confirma esta tentativa.
+    public async Task<SentConfirmation> ReadSentConfirmationAsync(Guid id, Guid token, CancellationToken cancellationToken)
+    {
+        var row = await dbContext.Notifications.AsNoTracking().Where(n => n.Id == id)
+            .Select(n => new { n.Status, n.SentConfirmationToken, n.ReservationToken }).SingleOrDefaultAsync(cancellationToken);
+        if (row?.Status == NotificationStatus.Sent && row.SentConfirmationToken == token)
+            return SentConfirmation.ConfirmedByAttempt;
+        return row?.Status == NotificationStatus.Sending && row.ReservationToken == token
+            ? SentConfirmation.StillSending : SentConfirmation.StateChanged;
+    }
 
     // Só Preparing pode falhar com reenvio seguro. Exceções durante SMTP são Unknown.
     public async Task<bool> TryMarkFailedAsync(Guid id, Guid token, string failureCode,

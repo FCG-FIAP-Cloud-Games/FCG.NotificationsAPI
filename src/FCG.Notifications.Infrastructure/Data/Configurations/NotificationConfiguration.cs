@@ -35,6 +35,8 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.Property(n => n.BusinessOperationId).HasMaxLength(200).IsRequired();
         builder.Property(n => n.LogicalRecipientId).HasMaxLength(200).IsRequired();
         builder.Property(n => n.SmtpDestinationId).HasMaxLength(100).IsRequired();
+        builder.Property(n => n.SmtpMessageId).HasMaxLength(100).IsRequired();
+        builder.Property(n => n.SmtpAcceptance).HasMaxLength(40);
         builder.Property(n => n.Subject).HasMaxLength(998);
         builder.Property(n => n.FailureCode).HasMaxLength(64);
         builder.Property(n => n.ReservationToken).IsConcurrencyToken();

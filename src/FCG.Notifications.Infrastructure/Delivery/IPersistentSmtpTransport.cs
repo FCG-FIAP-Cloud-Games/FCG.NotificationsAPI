@@ -4,10 +4,10 @@ namespace FCG.Notifications.Infrastructure.Delivery;
 
 public interface IPersistentSmtpTransport
 {
-    Task<IPreparedSmtpDelivery> PrepareAsync(string destinationId, NotificationMessage message, CancellationToken cancellationToken);
+    Task<IPreparedSmtpDelivery> PrepareAsync(string destinationId, NotificationMessage message, string messageId, CancellationToken cancellationToken);
 }
 
 public interface IPreparedSmtpDelivery : IAsyncDisposable
 {
-    Task SendAsync(CancellationToken cancellationToken);
+    Task<SmtpAcceptanceEvidence> SendAsync(CancellationToken cancellationToken);
 }

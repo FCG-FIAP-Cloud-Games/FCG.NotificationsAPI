@@ -23,7 +23,7 @@ public sealed partial class PersistentSmtpTransport : IPersistentSmtpTransport
         _createClient = createClient;
     }
 
-    public async Task<IPreparedSmtpDelivery> PrepareAsync(string destinationId, NotificationMessage message, CancellationToken cancellationToken)
+    public async Task<IPreparedSmtpDelivery> PrepareAsync(string destinationId, NotificationMessage message, string messageId, CancellationToken cancellationToken)
     {
         // IDs explícitos: nunca usar posição de array, host ou fallback para redirecionar uma entrega.
         var destinations = _configuration.GetSection("Smtp:Destinations").GetChildren().ToArray();
@@ -43,7 +43,7 @@ public sealed partial class PersistentSmtpTransport : IPersistentSmtpTransport
             || !Enum.TryParse<SecureSocketOptions>(destination["SecureSocketOptions"] ?? "StartTls", true, out var security)
             || !Enum.IsDefined(security))
             throw new InvalidOperationException("Configuração SMTP inválida para entrega persistente.");
-        var email = new MimeMessage();
+        var email = new MimeMessage { MessageId = messageId };
         email.From.Add(MailboxAddress.Parse(from));
         email.To.Add(MailboxAddress.Parse(message.Recipient));
         email.Subject = message.Subject;
@@ -66,7 +66,8 @@ public sealed partial class PersistentSmtpTransport : IPersistentSmtpTransport
     private sealed class Session(ISmtpClient client, MimeMessage email, ILogger logger) : IPreparedSmtpDelivery
     {
         public ISmtpClient Client { get; } = client;
-        public async Task SendAsync(CancellationToken cancellationToken) => await Client.SendAsync(email, cancellationToken);
+        public async Task<SmtpAcceptanceEvidence> SendAsync(CancellationToken cancellationToken) =>
+            SmtpAcceptanceEvidence.FromSuccessfulResponse(await Client.SendAsync(email, cancellationToken));
         public async ValueTask DisposeAsync()
         {
             try

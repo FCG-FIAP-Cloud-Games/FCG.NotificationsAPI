@@ -26,6 +26,7 @@ public sealed class Notification
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
 
         Id = Guid.NewGuid();
+        SmtpMessageId = $"fcg.{Id:N}@notifications.invalid";
         EventId = eventId;
         CorrelationId = correlationId;
         UserId = userId;
@@ -61,6 +62,10 @@ public sealed class Notification
     // Null identifica registros legados sem conteúdo reconstruível; não são adquiridos.
     public string? Subject { get; private set; }
     public string? Body { get; private set; }
+    public string SmtpMessageId { get; private set; } = string.Empty;
+    // Evidência de aceitação pelo relay, não de entrega ao destinatário.
+    public string? SmtpAcceptance { get; private set; }
+    public Guid? SentConfirmationToken { get; private set; }
     public Guid? ReservationToken { get; private set; }
     public DateTimeOffset? ReservationExpiresAt { get; private set; }
     public int AttemptCount { get; private set; }

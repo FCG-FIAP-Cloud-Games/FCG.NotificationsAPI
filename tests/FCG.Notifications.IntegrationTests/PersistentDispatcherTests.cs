@@ -8,6 +8,8 @@ using MailKit;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -220,6 +222,163 @@ public class PersistentDispatcherTests
         Assert.Contains("Envio direto desabilitado", error.Message);
     }
 
+    [Theory]
+    [InlineData("250 2.0.0 queued recipient@example.test password body", "SMTP_ACCEPTED 2.0.0")]
+    [InlineData("2.1.5 accepted <private@example.test>", "SMTP_ACCEPTED 2.1.5")]
+    [InlineData("accepted private@example.test", "SMTP_ACCEPTED")]
+    [InlineData("250 2.0.0private@example.test", "SMTP_ACCEPTED")]
+    [InlineData("250 5.0.0 private", "SMTP_ACCEPTED")]
+    public async Task MessageId_persistido_antes_do_envio_e_aceitacao_sanitizada(string response, string expected)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var delivery = Delivery();
+        // Exercita também o INSERT SQL usado na intenção transacional.
+        await using (var db = database.Open())
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(Ct);
+            Assert.True(await new NotificationRepository(db).TryAddAsync(delivery, Ct));
+            await transaction.CommitAsync(Ct);
+        }
+        var sends = 0;
+        var transport = Transport(() => new FakeSmtpClient
+        {
+            Response = response,
+            OnMessage = message => Assert.Equal(delivery.SmtpMessageId, message.MessageId),
+            OnSend = async () =>
+            {
+                await using var db = database.Open();
+                var persisted = await db.Notifications.SingleAsync(Ct);
+                Assert.Equal(delivery.SmtpMessageId, persisted.SmtpMessageId);
+                Assert.Equal(NotificationStatus.Sending, persisted.Status);
+                Assert.Null(persisted.SmtpAcceptance);
+                sends++;
+            }
+        });
+        await RunAsync(database, transport);
+        await RunAsync(database, transport);
+        await using var verify = database.Open();
+        var sent = await verify.Notifications.SingleAsync(Ct);
+        Assert.Equal($"fcg.{delivery.Id:N}@notifications.invalid", sent.SmtpMessageId);
+        Assert.Equal(expected, sent.SmtpAcceptance);
+        Assert.NotNull(sent.SentConfirmationToken);
+        Assert.Equal(1, sends);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task Commit_Sent_com_resposta_perdida_nao_gera_falso_negativo_nem_reenvio(int readFailures)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        await database.InsertAsync(Delivery());
+        var sends = 0;
+        var logger = new RecordingDispatcherLogger();
+        var transport = Transport(() => new FakeSmtpClient { OnSend = () => { sends++; return Task.CompletedTask; } });
+        await using (var db = database.Open())
+        {
+            var repository = RepositoryProxy.Wrap(new NotificationRepository(db));
+            var proxy = (RepositoryProxy)repository;
+            proxy.LoseResponse = true;
+            proxy.ReadFailures = readFailures;
+            await new PersistentNotificationDispatcher(repository, transport,
+                new NotificationsDispatcherOptions { Enabled = true }, logger).RunOnceAsync(Ct);
+            Assert.Equal(Math.Min(3, readFailures + 1), proxy.SentAttempts);
+            Assert.Contains(logger.Entries, e => Equals(e["Stage"], readFailures == 3 ? "SENT_CONFIRMATION_UNKNOWN" : "ACCEPTED_ALREADY_RECORDED"));
+            Assert.DoesNotContain(logger.Entries, e => Equals(e["Stage"], "ACCEPTED_NOT_RECORDED"));
+        }
+        await RunAsync(database, transport);
+        await using var verify = database.Open();
+        Assert.Equal(NotificationStatus.Sent, (await verify.Notifications.SingleAsync(Ct)).Status);
+        Assert.Equal(1, sends);
+    }
+
+    [Fact]
+    public async Task Recuperacao_preserva_MessageId_e_token_antigo_nao_confirma_outro_dispatcher()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var delivery = Delivery();
+        await database.InsertAsync(delivery);
+        await using var db = database.Open();
+        var repo = new NotificationRepository(db);
+        var old = (await repo.TryAcquireAsync(delivery.Id, TimeSpan.FromMinutes(5), Ct))!;
+        await ExpireAsync(db, delivery.Id);
+        await repo.RecoverExpiredAsync(Ct);
+        var current = (await repo.TryAcquireAsync(delivery.Id, TimeSpan.FromMinutes(5), Ct))!;
+        Assert.Equal(old.SmtpMessageId, current.SmtpMessageId);
+        var token = current.ReservationToken!.Value;
+        Assert.True(await repo.TryStartSendingAsync(delivery.Id, token, Ct));
+        Assert.False(await repo.TryMarkSentAsync(delivery.Id, old.ReservationToken!.Value, Ct));
+        Assert.Equal(SentConfirmation.StateChanged, await repo.ReadSentConfirmationAsync(delivery.Id, old.ReservationToken.Value, Ct));
+        Assert.True(await repo.TryMarkSentAsync(delivery.Id, token, Ct));
+        var before = await db.Notifications.AsNoTracking().SingleAsync(Ct);
+        Assert.False(await repo.TryMarkSentAsync(delivery.Id, token, Ct));
+        Assert.Equal(SentConfirmation.ConfirmedByAttempt, await repo.ReadSentConfirmationAsync(delivery.Id, token, Ct));
+        Assert.Equal(SentConfirmation.StateChanged, await repo.ReadSentConfirmationAsync(delivery.Id, old.ReservationToken.Value, Ct));
+        var after = await db.Notifications.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal(before.SentAt, after.SentAt);
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task Aceitacao_apos_expiracao_preserva_Unknown_sem_segundo_envio()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var delivery = Delivery();
+        await database.InsertAsync(delivery);
+        var sends = 0;
+        var logger = new RecordingDispatcherLogger();
+        var transport = Transport(() => new FakeSmtpClient { OnSend = async () =>
+        {
+            sends++;
+            await using var db = database.Open();
+            await ExpireAsync(db, delivery.Id);
+            await new NotificationRepository(db).RecoverExpiredAsync(Ct);
+        }});
+        await using (var db = database.Open())
+            await new PersistentNotificationDispatcher(new NotificationRepository(db), transport,
+                new NotificationsDispatcherOptions { Enabled = true }, logger).RunOnceAsync(Ct);
+        await RunAsync(database, transport);
+        await using var verify = database.Open();
+        var result = await verify.Notifications.SingleAsync(Ct);
+        Assert.Equal(NotificationStatus.Unknown, result.Status);
+        Assert.Equal(delivery.SmtpMessageId, result.SmtpMessageId);
+        Assert.Null(result.SentConfirmationToken);
+        Assert.Null(result.SmtpAcceptance);
+        Assert.Contains(logger.Entries, e => Equals(e["Stage"], "SENT_STATE_CHANGED"));
+        Assert.Equal(1, sends);
+    }
+
+    [Fact]
+    public async Task Migration_preenche_identificador_sem_inventar_aceitacao_ou_alterar_estados()
+    {
+        await using var database = await TestDatabase.CreateAsync(migrate: false);
+        await using var db = database.Open();
+        var migrator = db.GetService<IMigrator>();
+        await migrator.MigrateAsync("20261023004351_NotificationReconciliationAudit", Ct);
+        var rows = new[] { NotificationStatus.Pending, NotificationStatus.Sent, NotificationStatus.Unknown }
+            .Select(status => (Id: Guid.NewGuid(), Status: status)).ToArray();
+        foreach (var row in rows)
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO notifications ("Id", "EventId", "CorrelationId", "UserId", "Type", "Destination",
+                    "Status", "CreatedAt", "UpdatedAt", "BusinessOperationId", "LogicalRecipientId",
+                    "SmtpDestinationId", "Subject", "Body", "AttemptCount")
+                VALUES ({row.Id}, {Guid.NewGuid()}, {Guid.NewGuid()}, {Guid.NewGuid()}, 'Welcome', 'private@example.test',
+                    {row.Status.ToString()}, clock_timestamp(), clock_timestamp(), {row.Id.ToString()}, 'user',
+                    'gmail', 'subject', 'body', 0)
+                """, Ct);
+        await migrator.MigrateAsync(cancellationToken: Ct);
+        foreach (var row in rows)
+        {
+            var stored = await db.Notifications.AsNoTracking().SingleAsync(n => n.Id == row.Id, Ct);
+            Assert.Equal(row.Status, stored.Status);
+            Assert.Equal($"fcg.{row.Id:N}@notifications.invalid", stored.SmtpMessageId);
+            Assert.Null(stored.SmtpAcceptance);
+            Assert.Null(stored.SentConfirmationToken);
+        }
+        Assert.Equal(rows[0].Id, Assert.Single(await new NotificationRepository(db).GetEligibleIdsAsync(10, Ct)));
+    }
+
     private static Notification Delivery(string route = "gmail") => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
         NotificationType.Welcome, "user-created-1", "user-1", route, "recipient@example.test", "subject", "body", DateTimeOffset.UtcNow);
     private static PersistentNotificationDispatcher Dispatcher(INotificationRepository repository, IPersistentSmtpTransport transport) =>
@@ -247,6 +406,8 @@ public class PersistentDispatcherTests
         public Func<Task>? OnConnect { get; init; }
         public Action<string>? OnHost { get; init; }
         public Func<Task>? OnSend { get; init; }
+        public Action<MimeMessage>? OnMessage { get; init; }
+        public string Response { get; init; } = "accepted";
         private bool _connected;
         public override bool IsConnected => _connected;
         public override async Task ConnectAsync(string host, int port, SecureSocketOptions options, CancellationToken cancellationToken = default)
@@ -258,9 +419,10 @@ public class PersistentDispatcherTests
         }
         public override async Task<string> SendAsync(FormatOptions options, MimeMessage message, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
         {
+            OnMessage?.Invoke(message);
             if (OnSend is not null) await OnSend();
             if (Failure == "send") throw new IOException();
-            return "accepted";
+            return Response;
         }
         public override Task DisconnectAsync(bool quit, CancellationToken cancellationToken = default)
         {
@@ -273,6 +435,8 @@ public class PersistentDispatcherTests
     public class RepositoryProxy : DispatchProxy
     {
         private INotificationRepository? _inner;
+        public bool LoseResponse { get; set; }
+        public int ReadFailures { get; set; }
         public int SentAttempts { get; private set; }
         public static INotificationRepository Wrap(INotificationRepository inner)
         {
@@ -280,12 +444,24 @@ public class PersistentDispatcherTests
             ((RepositoryProxy)proxy)._inner = inner;
             return proxy;
         }
+        private static async Task<bool> CommitThenLoseAsync(Task<bool> write)
+        {
+            var result = await write;
+            if (result) throw new IOException("Commit response lost");
+            return result;
+        }
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod!.Name == nameof(INotificationRepository.TryMarkSentAsync))
             {
                 SentAttempts++;
+                if (LoseResponse) return CommitThenLoseAsync((Task<bool>)targetMethod.Invoke(_inner, args)!);
                 return Task.FromException<bool>(new IOException("Simulated persistence failure"));
+            }
+            if (targetMethod.Name == nameof(INotificationRepository.ReadSentConfirmationAsync) && ReadFailures > 0)
+            {
+                ReadFailures--;
+                return Task.FromException<SentConfirmation>(new IOException("Read unavailable"));
             }
             return targetMethod.Invoke(_inner, args);
         }

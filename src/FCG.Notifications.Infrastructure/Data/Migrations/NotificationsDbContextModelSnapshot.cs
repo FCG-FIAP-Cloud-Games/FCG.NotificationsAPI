@@ -109,7 +109,19 @@ namespace FCG.Notifications.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset?>("SentAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SentConfirmationToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SmtpAcceptance")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<string>("SmtpDestinationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("SmtpMessageId")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
