@@ -40,6 +40,7 @@ public static class DependencyInjection
 
         services.AddScoped<IInboxStore, InboxStore>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<INotificationOperationsQuery, NotificationRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IUserEmailRepository, UserEmailRepository>();
 
