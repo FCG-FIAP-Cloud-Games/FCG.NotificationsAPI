@@ -7,6 +7,7 @@ namespace FCG.Notifications.Infrastructure.Data;
 
 public sealed class NotificationRepository(NotificationsDbContext dbContext) : INotificationRepository
 {
+<<<<<<< Updated upstream
     public async Task<bool> TryAddAsync(Notification notification, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(notification);
@@ -23,6 +24,17 @@ public sealed class NotificationRepository(NotificationsDbContext dbContext) : I
                 {notification.Subject}, {notification.Body}, 0)
             ON CONFLICT ("BusinessOperationId", "Type", "LogicalRecipientId", "SmtpDestinationId") DO NOTHING
             """, cancellationToken) == 1;
+=======
+    public async Task<List<Notification>> LockBusinessOperationAsync(string operationId, NotificationType type, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Reserva da operação de negócio exige transação explícita.");
+        var key = $"notifications:{type}:{operationId}";
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+        return await dbContext.Notifications.AsNoTracking()
+            .Where(n => n.BusinessOperationId == operationId && n.Type == type).ToListAsync(cancellationToken);
+>>>>>>> Stashed changes
     }
 
     public Task<List<Guid>> GetEligibleIdsAsync(int limit, CancellationToken cancellationToken)
