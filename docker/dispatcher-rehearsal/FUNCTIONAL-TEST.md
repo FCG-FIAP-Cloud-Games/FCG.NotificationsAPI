@@ -51,42 +51,45 @@ Executar na raiz da NotificationsAPI. Não executar os comandos de publish/repea
 
 ```powershell
 $tool = '.\docker\dispatcher-rehearsal\functional-test.py'
+$scenario = 'destinatario-2'
 
 # Somente leitura; possível com API parada.
 python -B $tool isolation
 
 # Preparação local: pede destinatário sem eco, gera IDs uma única vez e NÃO publica.
-python -B $tool init
-python -B $tool plan
+python -B $tool init --scenario $scenario
+python -B $tool plan --scenario $scenario
 
 # SOMENTE ETAPA 5C.2, depois de iniciar explicitamente a API com o helper da 5B:
-python -B $tool publish --confirm-send
+python -B $tool publish --scenario $scenario --confirm-send
 
 # Consultas somente leitura; aguardar processamento assíncrono.
-python -B $tool db
-python -B $tool mailhog
-python -B $tool queues
-python -B $tool logs
+python -B $tool db --scenario $scenario
+python -B $tool mailhog --scenario $scenario
+python -B $tool queues --scenario $scenario
+python -B $tool logs --scenario $scenario
 
 # Após ambas Sent e uma mensagem no MailHog, salvar baseline.
 # Conferir também uma mensagem no Gmail antes da reentrega.
-python -B $tool snapshot
+python -B $tool snapshot --scenario $scenario
 
 # Uma reentrega explícita do MESMO evento/payload, sem novos IDs ou timestamps.
-python -B $tool repeat --confirm-send
+python -B $tool repeat --scenario $scenario --confirm-send
 
 # Aguardar o segundo processamento do consumidor e confirmar filas drenadas.
-python -B $tool queues
-python -B $tool logs
-python -B $tool db
-python -B $tool mailhog
-python -B $tool compare
+python -B $tool queues --scenario $scenario
+python -B $tool logs --scenario $scenario
+python -B $tool db --scenario $scenario
+python -B $tool mailhog --scenario $scenario
+python -B $tool compare --scenario $scenario
 ```
 
-O comando `init` não foi executado para um destinatário real na preparação. Esse endereço ainda
-precisa ser escolhido na 5C.2. O evento fica em `artifacts/functional/event.json`, ignorado pelo Git;
-contém endereço pessoal, não deve ser anexado a relatórios ou exibido. O hash SHA-256 é salvo ao lado.
-`init` nunca sobrescreve o evento; `plan` mostra apenas EventId, hash e metadados de transporte.
+Cada cenário novo fica em `artifacts/functional/scenarios/<nome>/`, ignorado pelo Git.
+O evento contém endereço pessoal: não deve ser anexado a relatórios nem exibido. O hash SHA-256
+fica ao lado. Payload, baseline, intenções e recibos de publicação/reentrega ficam na pasta do cenário.
+`init` nunca sobrescreve cenário existente; `plan` mostra apenas cenário, EventId, hash e metadados.
+O destinatário é solicitado por entrada oculta. Espaços nas bordas são removidos; nomes de exibição,
+colchetes e espaços internos continuam rejeitados. Sem entrada oculta disponível, a criação é bloqueada.
 
 `publish` e `repeat` fazem no máximo um POST cada. Cada um cria um arquivo de intenção antes da
 chamada e um recibo após a resposta. Se houver timeout/resposta perdida, não apagar o arquivo nem
@@ -133,7 +136,7 @@ Antes das leituras/publicações, o script confere labels, rede, volumes, portas
 
 ## Riscos e limites
 
-- Nenhum critério funcional foi executado/aprovado nesta preparação. Os quatro testes do helper
+- Nenhum critério funcional foi executado/aprovado nesta preparação. Os testes do helper
   são offline e substituem HTTP/Docker por mocks; não publicam no broker.
 - A verificação de Inbox + duas linhas demonstra o resultado; a atomicidade também se apoia na
   transação explícita do consumidor/UnitOfWork. Este ensaio não injeta falha de commit.
@@ -156,5 +159,55 @@ MailHog exclusivo com total=0. Nenhum banco/fila integrado foi consultado.
 python -B .\docker\dispatcher-rehearsal\test_functional_tool.py
 ```
 
-Quatro testes offline: contrato/hash imutável, bloqueio sem confirmação, resposta perdida sem retry
-e preservação exata do payload/message_id na reentrega.
+Doze testes offline cobrem contrato/hash, confirmação explícita, resposta perdida sem retry,
+payload/message_id idênticos na reentrega, múltiplos cenários, seleção dos comandos, preservação
+de evidências legadas, nomes inválidos, validação do destinatário e recusa de sobrescrita.
+
+
+## Correção: múltiplos cenários sem perder o teste anterior
+
+A ferramenta anterior usava uma única pasta fixa para todos os comandos. Por isso:
+
+- `Use a plain valid recipient address`: a expressão regular rejeitava qualquer espaço, inclusive
+  nas bordas, além de nome de exibição, colchetes e ausência de endereço simples. O valor rejeitado
+  não foi registrado; não é possível identificar qual dessas condições ocorreu no caso relatado.
+- `FileExistsError`: `event.json` era aberto com `xb` (criação exclusiva). A segunda criação era
+  bloqueada para preservar o evento anterior; faltava selecionar uma pasta independente.
+
+Agora `--scenario` é obrigatório em todos os comandos ligados a um evento, inclusive publicação.
+`isolation` é a única operação sem cenário. Não há cenário ativo implícito nem escolha automática
+pelo diretório mais recente. A seleção é feita a cada invocação.
+
+Nomes aceitos: 1 a 48 caracteres, letras minúsculas, números e hífens, começando por letra.
+Caminhos, nomes reservados do Windows e redirecionamentos simbólicos de cenário são rejeitados.
+Use nomes neutros como `destinatario-2`, nunca o e-mail ou outro dado pessoal no nome.
+
+`legacy` é um nome reservado que aponta diretamente para a pasta antiga `artifacts/functional/`.
+Nenhum arquivo antigo é movido, renomeado, regravado ou excluído. `init --scenario legacy` é bloqueado.
+O evento anterior informado pelo operador é `870cb8d1-23ca-4184-b3af-a359692803fa`.
+Para voltar a suas evidências, sem publicar nada:
+
+```powershell
+python -B $tool plan --scenario legacy
+python -B $tool db --scenario legacy
+python -B $tool mailhog --scenario legacy
+python -B $tool logs --scenario legacy
+# Se já houver baseline salva para o teste anterior:
+python -B $tool compare --scenario legacy
+```
+
+Para o segundo cenário, use os comandos da seção Comandos com `$scenario = 'destinatario-2'`.
+Se esse nome já existir, consulte seu `plan` ou escolha um nome realmente novo; não apague arquivos.
+A criação acontece somente no `init`; publicação, snapshot, repeat e compare nunca geram IDs novos.
+O segundo cenário terá novos IDs. Sua própria reentrega reutiliza exatamente seus bytes de payload,
+EventId, demais GUIDs, OccurredAt e message_id AMQP. Os recibos não são compartilhados entre cenários.
+
+Os cenários compartilham o ambiente isolado de infraestrutura; a separação é por evento e arquivos.
+Execute um cenário por vez. Consultas de banco, MailHog e logs filtram o evento selecionado; os
+contadores RabbitMQ são da fila compartilhada e não identificam individualmente um cenário.
+A criação de novo cenário não resolve nem descarta a suspeita de duplicidade no destinatário anterior.
+Essa investigação deve usar as evidências preservadas e os Message-Ids; não foi executada nesta correção.
+
+Nesta correção foram alterados somente o script, seus testes offline e este documento. Os testes usam
+fixtures temporárias descartáveis em `artifacts/offline-tests`, conforme o mecanismo já existente;
+nunca abrem as evidências reais em `artifacts/functional`. Nenhum Docker, broker ou SMTP foi acessado.

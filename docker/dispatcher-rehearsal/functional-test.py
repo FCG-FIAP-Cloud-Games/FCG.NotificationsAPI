@@ -11,14 +11,56 @@ import subprocess
 import sys
 import urllib.request
 import uuid
+import warnings
 
 ROOT = Path(__file__).resolve().parent
-ART = ROOT / 'artifacts' / 'functional'
+ART_ROOT = ROOT / 'artifacts' / 'functional'
+ART = ART_ROOT
 PROJECT = 'fcg-notifications-rehearsal'
 VHOST = '%2Fdispatcher-rehearsal'
 EXCHANGE = 'PurchaseNotificationTestEvent'
 QUEUE = 'notifications-purchase-test'
 CONSUMER = 'PurchaseNotificationTestEventConsumer'
+
+
+def scenario_path(name):
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,47}', name or '') or name in {
+        'con', 'prn', 'aux', 'nul', *('com' + str(i) for i in range(10)),
+        *('lpt' + str(i) for i in range(10))
+    }:
+        raise RuntimeError('Use a scenario name with 1-48 lowercase letters, digits or hyphens, starting with a letter; no paths.')
+    # Compatibility without moving or rewriting any existing evidence.
+    if name == 'legacy':
+        return ART_ROOT
+    parent = ART_ROOT / 'scenarios'
+    path = parent / name
+    if parent.is_symlink() or path.is_symlink() or path.resolve().parent != parent.resolve():
+        raise RuntimeError('Scenario directory must not redirect to another location.')
+    return path
+
+
+def initialize_scenario(name):
+    path = scenario_path(name)
+    if name == 'legacy' or path.exists():
+        raise RuntimeError('Scenario already reserved/existing. Use plan for it or init --scenario with a new name; nothing was overwritten.')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', getpass.GetPassWarning)
+        try:
+            email = getpass.getpass('Controlled recipient (hidden; address only): ')
+        except getpass.GetPassWarning:
+            raise RuntimeError('Hidden input unavailable; use an interactive terminal.') from None
+    event = make_event(email)
+    raw = json.dumps(event, indent=2, ensure_ascii=True).encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir()  # Exclusive directory reservation also protects concurrent init.
+    except FileExistsError:
+        raise RuntimeError('Scenario already exists; nothing was overwritten.') from None
+    with (path / 'event.json').open('xb') as handle:
+        handle.write(raw)
+    with (path / 'event.sha256').open('x') as handle:
+        handle.write(hashlib.sha256(raw).hexdigest())
+    print('Event saved locally in selected scenario. No network operation. Recipient not displayed.')
 
 
 def docker(*args, data=None):
@@ -77,14 +119,17 @@ def http(path, body=None, mailhog=False):
 
 
 def make_event(email):
+    email = email.strip()
     if not re.fullmatch(r'[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+', email):
-        raise RuntimeError('Use a plain valid recipient address; value omitted.')
+        raise RuntimeError('Use only one recipient address, without display name, brackets or internal spaces; value omitted.')
     return {**{k: str(uuid.uuid4()) for k in ['EventId', 'CorrelationId', 'UserId', 'OrderId', 'GameId']},
             'OccurredAt': dt.datetime.now(dt.timezone.utc).isoformat(),
             'Version': 1, 'Amount': 19.90, 'Currency': 'BRL', 'Email': email}
 
 
 def load_event():
+    if not (ART / 'event.json').is_file() or not (ART / 'event.sha256').is_file():
+        raise RuntimeError('Selected scenario has no complete event/hash. Check --scenario; do not replace previous evidence.')
     raw = (ART / 'event.json').read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
     if digest != (ART / 'event.sha256').read_text().strip():
@@ -199,19 +244,19 @@ def publish(raw, event, digest, repeat, confirmed):
 
 
 def main():
+    global ART
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['init', 'plan', 'isolation', 'db', 'mailhog', 'queues', 'logs',
                                          'snapshot', 'compare', 'publish', 'repeat'])
     parser.add_argument('--confirm-send', action='store_true')
+    parser.add_argument('--scenario', help='Explicit scenario name; legacy selects the original files without migration.')
     args = parser.parse_args()
+    if args.action != 'isolation':
+        if args.scenario is None:
+            parser.error('--scenario is required (use legacy for the original event).')
+        ART = scenario_path(args.scenario)
     if args.action == 'init':
-        event = make_event(getpass.getpass('Controlled recipient (hidden): '))
-        ART.mkdir(parents=True, exist_ok=True)
-        raw = json.dumps(event, indent=2, ensure_ascii=True).encode()
-        with (ART / 'event.json').open('xb') as handle:
-            handle.write(raw)
-        (ART / 'event.sha256').write_text(hashlib.sha256(raw).hexdigest())
-        print('Event saved locally. No network operation. Recipient not displayed.')
+        initialize_scenario(args.scenario)
         return
     if args.action == 'isolation':
         isolation()
@@ -222,7 +267,7 @@ def main():
         return
     raw, event, digest = load_event()
     if args.action == 'plan':
-        print(json.dumps({'event_id': event['EventId'], 'sha256': digest, 'exchange': EXCHANGE,
+        print(json.dumps({'scenario': args.scenario, 'event_id': event['EventId'], 'sha256': digest, 'exchange': EXCHANGE,
                           'vhost': '/dispatcher-rehearsal', 'content_type': 'application/json'}))
         return
     # Prevent even network reads on an unconfirmed publication command.
