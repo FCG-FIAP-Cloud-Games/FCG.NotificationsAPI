@@ -1,12 +1,50 @@
 using FCG.Notifications.Application.Abstractions;
+using FCG.Notifications.Application.Notifications;
+using System.Linq.Expressions;
 using FCG.Notifications.Domain.Notifications.Entities;
 using FCG.Notifications.Domain.Notifications.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace FCG.Notifications.Infrastructure.Data;
 
-public sealed class NotificationRepository(NotificationsDbContext dbContext) : INotificationRepository
+public sealed partial class NotificationRepository(NotificationsDbContext dbContext, INotificationReplaySafety? replaySafety = null)
+    : INotificationRepository, INotificationOperationsQuery, INotificationReconciliation
 {
+    private static readonly Expression<Func<Notification, NotificationOperationsItem>> OperationsProjection = n => new(
+        n.Id, n.Status, n.EventId, n.CorrelationId, n.BusinessOperationId, n.Type, n.SmtpDestinationId,
+        n.AttemptCount, n.CreatedAt, n.UpdatedAt, n.LastAttemptAt, n.NextAttemptAt, n.ReservationExpiresAt,
+        n.SendingAt, n.SentAt, n.FailedAt, n.UnknownAt, n.FailureCode);
+
+    public async Task<NotificationOperationsPage> SearchAsync(NotificationOperationsFilter filter, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        filter.Validate();
+        var query = dbContext.Notifications.AsNoTracking();
+        if (filter.Status.HasValue) query = query.Where(n => n.Status == filter.Status.Value);
+        if (filter.CreatedFrom.HasValue)
+        {
+            var from = filter.CreatedFrom.Value.ToUniversalTime();
+            query = query.Where(n => n.CreatedAt >= from);
+        }
+        if (filter.CreatedUntil.HasValue)
+        {
+            var until = filter.CreatedUntil.Value.ToUniversalTime();
+            query = query.Where(n => n.CreatedAt < until);
+        }
+        if (filter.BusinessOperationId is not null) query = query.Where(n => n.BusinessOperationId == filter.BusinessOperationId);
+        if (filter.SmtpDestinationId is not null) query = query.Where(n => n.SmtpDestinationId == filter.SmtpDestinationId);
+        var items = await query.OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.Id)
+            .Skip((filter.Page - 1) * filter.PageSize).Take(filter.PageSize + 1)
+            .Select(OperationsProjection).ToListAsync(cancellationToken);
+        var hasNext = items.Count > filter.PageSize;
+        if (hasNext) items.RemoveAt(items.Count - 1);
+        return new(items.AsReadOnly(), filter.Page, filter.PageSize, hasNext);
+    }
+
+    public Task<NotificationOperationsItem?> GetAsync(Guid notificationId, CancellationToken cancellationToken) =>
+        dbContext.Notifications.AsNoTracking().Where(n => n.Id == notificationId)
+            .Select(OperationsProjection).SingleOrDefaultAsync(cancellationToken);
+
     public async Task<bool> TryAddAsync(Notification notification, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(notification);

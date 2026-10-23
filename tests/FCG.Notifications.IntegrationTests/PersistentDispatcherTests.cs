@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using MimeKit;
 using TestDatabase = FCG.Notifications.IntegrationTests.NotificationPersistenceTests.TestDatabase;
 
@@ -19,6 +20,50 @@ namespace FCG.Notifications.IntegrationTests;
 public class PersistentDispatcherTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Theory]
+    [InlineData("connect", "Failed", "FAILURE_RECORDED")]
+    [InlineData("send", "Unknown", "UNKNOWN_RECORDED")]
+    [InlineData("none", "Sent", "ACCEPTED_RECORDED")]
+    public async Task Logs_estruturados_correlacionam_entrega_sem_conteudo_sensivel(string failure, string status, string stage)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var delivery = Delivery();
+        await database.InsertAsync(delivery);
+        await using var db = database.Open();
+        var logger = new RecordingDispatcherLogger();
+        var transport = Transport(() => new FakeSmtpClient
+        {
+            OnConnect = () => failure == "connect" ? Task.FromException(new IOException("secret-exception")) : Task.CompletedTask,
+            OnSend = () => failure == "send" ? Task.FromException(new IOException("secret-exception")) : Task.CompletedTask
+        });
+        await new PersistentNotificationDispatcher(new NotificationRepository(db), transport,
+            new NotificationsDispatcherOptions { Enabled = true }, logger).RunOnceAsync(Ct);
+        Assert.Contains(logger.Entries, entry => Equals(entry["Stage"], stage) && Equals(entry["Status"], status));
+        Assert.All(logger.Entries, entry =>
+        {
+            Assert.Equal(delivery.Id, entry["NotificationId"]);
+            Assert.Equal(delivery.SmtpDestinationId, entry["SmtpDestinationId"]);
+            Assert.Equal(1, entry["AttemptCount"]);
+            Assert.DoesNotContain(delivery.Destination, string.Join(" ", entry.Values), StringComparison.Ordinal);
+            Assert.DoesNotContain("secret-exception", string.Join(" ", entry.Values), StringComparison.Ordinal);
+            Assert.DoesNotContain("Body", entry.Keys);
+            Assert.DoesNotContain("Subject", entry.Keys);
+            Assert.DoesNotContain("ReservationToken", entry.Keys);
+        });
+    }
+
+    private sealed class RecordingDispatcherLogger : ILogger<PersistentNotificationDispatcher>
+    {
+        public List<Dictionary<string, object?>> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Assert.Null(exception);
+            Entries.Add(((IEnumerable<KeyValuePair<string, object?>>)state!).ToDictionary(pair => pair.Key, pair => pair.Value));
+        }
+    }
 
     [Fact]
     public async Task Pending_sobrevive_nova_instancia_e_Sending_e_persistido_antes_do_SMTP()

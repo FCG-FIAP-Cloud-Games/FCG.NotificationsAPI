@@ -152,6 +152,78 @@ namespace FCG.Notifications.Infrastructure.Data.Migrations
                     b.ToTable("notifications", (string)null);
                 });
 
+            modelBuilder.Entity("FCG.Notifications.Domain.Notifications.Entities.NotificationReconciliationAudit", b =>
+                {
+                    b.Property<Guid>("AuditId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActionType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("CauseInvestigated")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("DuplicateRiskAcknowledged")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EvidenceReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("ExpectedUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NewStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OperatorId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("PreviousStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("QuiescenceEvidenceReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("AuditId");
+
+                    b.HasIndex("ActionId")
+                        .IsUnique();
+
+                    b.HasIndex("NotificationId", "CreatedAt", "AuditId");
+
+                    b.ToTable("notification_reconciliation_audits", (string)null);
+                });
+
             modelBuilder.Entity("FCG.Notifications.Domain.Notifications.Entities.UserEmailContact", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -169,6 +241,15 @@ namespace FCG.Notifications.Infrastructure.Data.Migrations
                     b.HasKey("UserId");
 
                     b.ToTable("user_email_contacts", (string)null);
+                });
+
+            modelBuilder.Entity("FCG.Notifications.Domain.Notifications.Entities.NotificationReconciliationAudit", b =>
+                {
+                    b.HasOne("FCG.Notifications.Domain.Notifications.Entities.Notification", null)
+                        .WithMany()
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }
