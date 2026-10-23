@@ -12,3 +12,7 @@
 docker-compose*.yml
 Dockerfile
 **/*.user
+# Dados privados do ensaio nao pertencem ao contexto da imagem integrada.
+**/.env
+**/.env.*
+docker/dispatcher-rehearsal/
