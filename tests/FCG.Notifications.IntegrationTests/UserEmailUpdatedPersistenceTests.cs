@@ -219,6 +219,9 @@ public class UserEmailUpdatedPersistenceTests
             var builder = new NpgsqlConnectionStringBuilder(connection);
             if (builder.Database is null || !builder.Database.StartsWith("fcg_notifications_test_", StringComparison.Ordinal))
                 throw new InvalidOperationException("Testes exigem banco descartável fcg_notifications_test_*.");
+            // O SearchPath gera uma connection string exclusiva por schema. Evite
+            // reter pools ociosos entre os casos de integração.
+            builder.Pooling = false;
             var schema = "test_" + Guid.NewGuid().ToString("N");
             await using var admin = new NpgsqlConnection(connection);
             await admin.OpenAsync(Ct);

@@ -250,6 +250,9 @@ public class NotificationPersistenceTests
             var builder = new NpgsqlConnectionStringBuilder(connection);
             if (builder.Database is null || !builder.Database.StartsWith("fcg_notifications_test_", StringComparison.Ordinal))
                 throw new InvalidOperationException("Testes exigem banco descartável fcg_notifications_test_*.");
+            // Cada schema temporário cria uma connection string própria. Sem pooling,
+            // conexões ociosas de schemas já descartados não esgotam max_connections.
+            builder.Pooling = false;
             var schema = "test_" + Guid.NewGuid().ToString("N");
             await using var admin = new NpgsqlConnection(connection);
             await admin.OpenAsync(Ct);
