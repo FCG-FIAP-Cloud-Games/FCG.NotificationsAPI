@@ -193,7 +193,7 @@ services:
 
   notificationsapi:
     build: .
-    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.7}
+    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.8}
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: "8080"
