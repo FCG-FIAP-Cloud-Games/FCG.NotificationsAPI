@@ -68,6 +68,28 @@ services:
     networks:
       - fcg-interna
 
+  # Cria os bindings exchange -> exchange que levam os eventos de Users e Payments
+  # até os exchanges consumidos pelo Notifications. Sem eles a fila fica vazia e
+  # nenhum e-mail real é enviado (o endpoint de teste do Swagger não passa por aqui).
+  rabbitmq-bindings:
+    image: curlimages/curl:8.10.1
+    entrypoint: ["/bin/sh", "/scripts/create-bindings.sh"]
+    environment:
+      RABBIT_API: http://rabbitmq:15672/api
+      RABBIT_USER: ${FCG_DEMO_RABBITMQ_USER:-fcg_demo}
+      RABBIT_PASS: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
+      # Confirme os nomes reais em Exchanges no RabbitMQ Management e ajuste no .env.
+      USERS_USER_CREATED_EXCHANGE: ${USERS_USER_CREATED_EXCHANGE:-FCG.Notifications.Application.Messaging.Contracts:UserCreatedEvent}
+      PAYMENTS_PAYMENT_PROCESSED_EXCHANGE: ${PAYMENTS_PAYMENT_PROCESSED_EXCHANGE:-PaymentProcessedEvent}
+    volumes:
+      - ./docker/rabbitmq/create-bindings.sh:/scripts/create-bindings.sh:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - fcg-interna
+
   smtp-dev:
     image: mailhog/mailhog
     platform: linux/amd64
@@ -171,7 +193,7 @@ services:
 
   notificationsapi:
     build: .
-    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.5}
+    image: fgcprojetofiap/notifications-api:${NOTIFICATIONS_API_TAG:-1.0.7}
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: "8080"
@@ -185,6 +207,11 @@ services:
       RabbitMq__Password: ${FCG_DEMO_RABBITMQ_PASSWORD:-Rabbit_Demo_2026!}
       RabbitMq__UseTls: "false"
       Messaging__EnablePurchaseNotificationTestEndpoint: "true"
+      Messaging__EnableTestEndpoints: "true"
+      # Modo persistente (Inbox + idempotência). Desligado por padrão; para o C37 use
+      # NOTIFICATIONS_DISPATCHER_ENABLED=true no .env.
+      NotificationsDispatcher__Enabled: "${NOTIFICATIONS_DISPATCHER_ENABLED:-false}"
+      Smtp__Id: ${SMTP_DESTINATION_ID:-smtp-dev}
       # Um destino SMTP por execução: SMTP_HOST=smtp-dev usa MailHog;
       # SMTP_HOST do provedor no .env usa o envio real. Credenciais nunca ficam no Compose.
       Smtp__Host: ${SMTP_HOST:-smtp-dev}
@@ -200,6 +227,8 @@ services:
         condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
+      rabbitmq-bindings:
+        condition: service_completed_successfully
       smtp-dev:
         condition: service_started
     restart: unless-stopped

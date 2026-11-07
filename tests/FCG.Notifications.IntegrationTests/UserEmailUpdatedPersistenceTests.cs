@@ -215,7 +215,14 @@ public class UserEmailUpdatedPersistenceTests
         public static async Task<TestDatabase> CreateAsync()
         {
             var connection = Environment.GetEnvironmentVariable("FCG_NOTIFICATIONS_TEST_POSTGRES");
-            Assert.SkipWhen(string.IsNullOrWhiteSpace(connection), "Defina PostgreSQL descartável em FCG_NOTIFICATIONS_TEST_POSTGRES.");
+            if (string.Equals(Environment.GetEnvironmentVariable("FCG_REQUIRE_POSTGRES_TESTS"), "true", StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.False(string.IsNullOrWhiteSpace(connection), "FCG_NOTIFICATIONS_TEST_POSTGRES é obrigatória quando FCG_REQUIRE_POSTGRES_TESTS=true.");
+            }
+            else
+            {
+                Assert.SkipWhen(string.IsNullOrWhiteSpace(connection), "Defina PostgreSQL descartável em FCG_NOTIFICATIONS_TEST_POSTGRES.");
+            }            
             var builder = new NpgsqlConnectionStringBuilder(connection);
             if (builder.Database is null || !builder.Database.StartsWith("fcg_notifications_test_", StringComparison.Ordinal))
                 throw new InvalidOperationException("Testes exigem banco descartável fcg_notifications_test_*.");

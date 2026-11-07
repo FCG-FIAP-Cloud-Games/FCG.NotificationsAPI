@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using FCG.Notifications.Application.Messaging.Contracts;
 
 namespace FCG.Notifications.Application.Notifications;
@@ -13,5 +14,6 @@ public static class UserCreatedEventValidator
         @event.CorrelationId != Guid.Empty &&
         @event.UserId != Guid.Empty &&
         !string.IsNullOrWhiteSpace(@event.Name) &&
-        !string.IsNullOrWhiteSpace(@event.Email);
+        !string.IsNullOrWhiteSpace(@event.Email) &&
+        MailAddress.TryCreate(@event.Email, out _);
 }

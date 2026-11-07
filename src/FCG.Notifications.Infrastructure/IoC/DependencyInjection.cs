@@ -48,7 +48,12 @@ public static class DependencyInjection
         services.AddScoped<INotificationSender, SmtpNotificationSender>();
         var dispatcherOptions = configuration.GetSection("NotificationsDispatcher").Get<NotificationsDispatcherOptions>()
             ?? new NotificationsDispatcherOptions();
-        if (dispatcherOptions.Enabled) dispatcherOptions.Validate();
+        if (dispatcherOptions.Enabled)
+        {
+            dispatcherOptions.Validate();
+            ValidatePersistentSmtpDestinationIds(configuration);
+        }
+
         services.AddSingleton(dispatcherOptions);
         services.AddScoped<IPersistentSmtpTransport, PersistentSmtpTransport>();
         services.AddScoped<PersistentNotificationDispatcher>();
@@ -91,9 +96,17 @@ public static class DependencyInjection
                         m => m.SetEntityName("PurchaseNotificationTestEvent"));
                 }
 
+                // Intervalos crescentes (~3,5 min no total): o PaymentProcessedEvent pode chegar
+                // antes de o UserCreatedEvent ter gravado o e-mail do usuário na projeção local;
+                // com poucos segundos de retry a compra ia para a fila _error sem recuperação.
                 rabbitMqConfigurator.UseMessageRetry(retryConfigurator =>
                 {
-                    retryConfigurator.Interval(3, TimeSpan.FromSeconds(5));
+                    retryConfigurator.Intervals(
+                        TimeSpan.FromSeconds(5),
+                        TimeSpan.FromSeconds(15),
+                        TimeSpan.FromSeconds(30),
+                        TimeSpan.FromSeconds(60),
+                        TimeSpan.FromMinutes(2));
                     retryConfigurator.Ignore<PermanentMessageException>();
                 });
 
@@ -132,5 +145,25 @@ public static class DependencyInjection
         });
 
         return services;
+    }
+
+    // Falha na subida (e não em cada mensagem, indo para a fila _error) quando o modo
+    // persistente está ligado sem Id de destino SMTP explícito, único e estável.
+    private static void ValidatePersistentSmtpDestinationIds(IConfiguration configuration)
+    {
+        var sections = configuration.GetSection("Smtp:Destinations").GetChildren().ToArray();
+        if (sections.Length == 0)
+        {
+            sections = [configuration.GetSection("Smtp")];
+        }
+
+        var ids = sections.Select(section => section["Id"]).ToArray();
+        if (ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 100)
+            || ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+        {
+            throw new InvalidOperationException(
+                "Com NotificationsDispatcher:Enabled=true, configure Smtp:Id (destino único) ou " +
+                "Smtp:Destinations:N:Id, com Ids explícitos, únicos e de até 100 caracteres.");
+        }
     }
 }

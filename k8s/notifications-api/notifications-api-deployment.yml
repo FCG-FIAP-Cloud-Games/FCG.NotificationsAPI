@@ -4,7 +4,17 @@ metadata:
   name: notifications-api-config
   namespace: fcg-demo
 data:
-  Swagger__Enabled: "false"
+  # Sem ASPNETCORE_ENVIRONMENT=Development o Swagger só existe com esta flag.
+  Swagger__Enabled: "true"
+  # Habilita POST /api/TestNotification/user-created (404 quando "false").
+  Messaging__EnableTestEndpoints: "true"
+  # Cria as tabelas (inclui a projeção de e-mails). Sem isso nenhum e-mail sai.
+  # Em produção, prefira um Job de migration e deixe "false".
+  Database__ApplyMigrationsOnStartup: "true"
+  # Id estável do destino SMTP; obrigatório se NotificationsDispatcher__Enabled=true.
+  Smtp__Id: "smtp-gmail"
+  # Para validar idempotência (C37), habilite também:
+  # NotificationsDispatcher__Enabled: "true"
   Smtp__Host: "smtp.gmail.com"
   Smtp__Port: "587"
   Smtp__From: "fcgproject.dev@gmail.com"
@@ -29,7 +39,7 @@ spec:
     spec:
       containers:
         - name: notifications-api
-          image: fgcprojetofiap/notifications-api:1.0.4
+          image: fgcprojetofiap/notifications-api:1.0.7
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
