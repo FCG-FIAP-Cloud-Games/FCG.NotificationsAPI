@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    # PostgreSQL descartável: sem ele os testes de persistência (Inbox, idempotência,
+    # dispatcher) são pulados e o resultado verde não prova a idempotência.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fcg_ci
+          POSTGRES_PASSWORD: fcg_ci_password
+          POSTGRES_DB: fcg_notifications_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fcg_ci -d fcg_notifications_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      FCG_NOTIFICATIONS_TEST_POSTGRES: Host=localhost;Port=5432;Database=fcg_notifications_test_ci;Username=fcg_ci;Password=fcg_ci_password
+      # No CI, a ausência do Postgres reprova os testes em vez de pulá-los.
+      FCG_REQUIRE_POSTGRES_TESTS: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Os projetos de teste são compilados direto, sem a solução .slnx
+      # (que exige SDK 9.0.200 ou superior).
+      - name: Testes unitários
+        run: dotnet test tests/FCG.Notifications.UnitTests -c Release
+
+      - name: Testes de integração (com PostgreSQL)
+        run: dotnet test tests/FCG.Notifications.IntegrationTests -c Release

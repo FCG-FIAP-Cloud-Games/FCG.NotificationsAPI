@@ -1,0 +1,11 @@
+# Contexto restrito: nunca enviar .env, artefatos, testes ou credenciais ao builder.
+**
+!Directory.Build.props
+!Directory.Packages.props
+!FCG.Notifications.slnx
+!src/
+!src/**
+**/bin/
+**/obj/
+**/.env
+**/.env.*

@@ -1,0 +1,18 @@
+**/bin/
+**/obj/
+.git/
+.gitignore
+.vs/
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+*.md
+docker-compose*.yml
+Dockerfile
+**/*.user
+# Dados privados do ensaio nao pertencem ao contexto da imagem integrada.
+**/.env
+**/.env.*
+docker/dispatcher-rehearsal/

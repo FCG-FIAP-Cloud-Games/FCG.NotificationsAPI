@@ -1,0 +1,107 @@
+name: fcg-notifications-rehearsal
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fcg_notifications_rehearsal
+      POSTGRES_USER: notifications_rehearsal
+      POSTGRES_PASSWORD: ${REHEARSAL_DB_PASSWORD:?Required}
+    ports:
+      - "127.0.0.1:55442:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [rehearsal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications_rehearsal -d fcg_notifications_rehearsal"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+
+  rabbitmq:
+    image: rabbitmq@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
+    hostname: rabbitmq-rehearsal
+    environment:
+      RABBITMQ_DEFAULT_USER: notifications_rehearsal
+      RABBITMQ_DEFAULT_PASS: ${REHEARSAL_RABBIT_PASSWORD:?Required}
+      RABBITMQ_DEFAULT_VHOST: /dispatcher-rehearsal
+    ports:
+      - "127.0.0.1:5678:5672"
+      - "127.0.0.1:15678:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks: [rehearsal]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+
+  smtp-dev:
+    image: mailhog/mailhog
+    ports:
+      - "127.0.0.1:8028:8025"
+    networks: [rehearsal]
+    restart: "no"
+
+  notificationsapi:
+    profiles: [functional]
+    image: fcg-notifications:dispatcher-rehearsal-4b3
+    build:
+      context: ../..
+      dockerfile: docker/dispatcher-rehearsal/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      Swagger__Enabled: "true"
+      Database__ApplyMigrationsOnStartup: "false"
+      ConnectionStrings__NotificationsDatabase: "Host=postgres;Port=5432;Database=fcg_notifications_rehearsal;Username=notifications_rehearsal;Password=${REHEARSAL_DB_PASSWORD:?Required}"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: /dispatcher-rehearsal
+      RabbitMq__Username: notifications_rehearsal
+      RabbitMq__Password: ${REHEARSAL_RABBIT_PASSWORD:?Required}
+      RabbitMq__UseTls: "false"
+      Messaging__EnablePurchaseNotificationTestEndpoint: "true"
+      NotificationsDispatcher__Enabled: "true"
+      NotificationsDispatcher__BatchSize: "2"
+      NotificationsDispatcher__PollSeconds: "5"
+      NotificationsDispatcher__LeaseSeconds: "300"
+      NotificationsDispatcher__AttemptTimeoutSeconds: "60"
+      NotificationsDispatcher__RetrySeconds: "60"
+      NotificationsDispatcher__MaxAttempts: "3"
+      Smtp__Destinations__0__Id: gmail
+      Smtp__Destinations__0__Host: smtp.gmail.com
+      Smtp__Destinations__0__Port: "587"
+      Smtp__Destinations__0__SecureSocketOptions: StartTls
+      Smtp__Destinations__0__User: ${SMTP_USER:?Required}
+      Smtp__Destinations__0__Password: ${SMTP_PASSWORD:?Required}
+      Smtp__Destinations__0__From: ${SMTP_FROM:?Required}
+      Smtp__Destinations__1__Id: mailhog
+      Smtp__Destinations__1__Host: smtp-dev
+      Smtp__Destinations__1__Port: "1025"
+      Smtp__Destinations__1__SecureSocketOptions: None
+      Smtp__Destinations__1__User: ""
+      Smtp__Destinations__1__Password: ""
+      Smtp__Destinations__1__From: notifications@fcg.test
+    ports:
+      - "127.0.0.1:5093:8080"
+    networks: [rehearsal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      smtp-dev:
+        condition: service_started
+    restart: "no"
+
+networks:
+  rehearsal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

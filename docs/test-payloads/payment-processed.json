@@ -1,0 +1,13 @@
+{
+  "eventId": "b203bc10-8125-49f3-91f0-674ef2520b0c",
+  "correlationId": "7d9a0c59-dc16-4b32-877a-ad9d227ac543",
+  "occurredAt": "2026-10-22T12:05:00Z",
+  "version": 1,
+  "paymentId": "0951b031-9a09-4c25-90aa-e64d39588117",
+  "orderId": "f58613f4-65d8-43da-9f92-78db4b681c41",
+  "userId": "ae4b3272-d514-43cb-8763-91f1a5d8bc07",
+  "gameId": "574ad612-723c-4b4e-9f65-02f5a087ae54",
+  "amount": 59.90,
+  "currency": "BRL",
+  "status": "Approved"
+}

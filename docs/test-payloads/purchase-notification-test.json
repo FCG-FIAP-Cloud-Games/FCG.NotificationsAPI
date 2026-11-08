@@ -1,0 +1,12 @@
+{
+  "eventId": "dbfe6954-a2c6-43bb-bbcc-ffb146f861bb",
+  "correlationId": "f96e5461-839e-4700-8bf9-6437ad7d5ca8",
+  "occurredAt": "2026-10-22T12:10:00Z",
+  "version": 1,
+  "userId": "ae4b3272-d514-43cb-8763-91f1a5d8bc07",
+  "orderId": "4c11d019-a8d4-4538-b9da-a201da72045e",
+  "gameId": "574ad612-723c-4b4e-9f65-02f5a087ae54",
+  "amount": 59.90,
+  "currency": "BRL",
+  "email": "destinatario-de-teste@example.net"
+}

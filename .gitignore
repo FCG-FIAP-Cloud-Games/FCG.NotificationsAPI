@@ -1,4 +1,5 @@
 ## .NET
+.env
 bin/
 obj/
 *.user
